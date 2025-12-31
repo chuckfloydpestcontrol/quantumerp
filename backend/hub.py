@@ -14,9 +14,10 @@ from datetime import datetime
 from typing import Annotated, Any, Optional, TypedDict
 
 from langchain_anthropic import ChatAnthropic
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, BaseMessage
 from langchain_core.prompts import ChatPromptTemplate
 from langgraph.graph import END, StateGraph
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import get_settings
 from database import get_db_context
@@ -24,7 +25,8 @@ from services.inventory import InventoryService
 from services.scheduling import SchedulingService
 from services.costing import CostingService
 from services.job import JobService
-from models import QuoteType
+from services.conversation import ConversationService
+from models import QuoteType, Item
 
 
 # ============================================================================
@@ -35,6 +37,10 @@ class AgentState(TypedDict):
     """State shared across all nodes in the graph."""
     # Message history
     messages: Annotated[list, operator.add]
+
+    # Conversation context
+    thread_id: Optional[str]
+    conversation_history: Optional[list]
 
     # Routing control
     next_step: str
@@ -51,6 +57,10 @@ class AgentState(TypedDict):
     bom: Optional[list[dict]]
     labor_hours: Optional[float]
     machine_type: Optional[str]
+
+    # Quote selection (for accepting quotes)
+    quote_selection: Optional[str]
+    pending_quote_data: Optional[dict]
 
     # Parallel execution results (Fan-In collection)
     inventory_data: Optional[dict]
@@ -81,8 +91,10 @@ You support these primary workflows:
 - QUOTE_REQUEST: User wants a quote for manufacturing a product
 - SCHEDULE_REQUEST: User wants to schedule production (Dynamic Entry - no PO required)
 - JOB_STATUS: User wants status on an existing job
-- INVENTORY_QUERY: User wants to check inventory
+- INVENTORY_QUERY: User wants to check specific item stock (e.g., "do we have aluminum?")
+- LIST_INVENTORY: User wants to see all inventory items (e.g., "show inventory", "list materials")
 - SCHEDULE_VIEW: User wants to see production schedule
+- ACCEPT_QUOTE: User wants to accept a quote option (e.g., "accept the balanced option", "go with fastest")
 - GENERAL_QUERY: General questions about the system
 
 Extract these details from the user message when applicable:
@@ -92,16 +104,18 @@ Extract these details from the user message when applicable:
 - requested_date: When they need it
 - job_number: If referencing an existing job
 - material_type: If mentioned (e.g., "aluminum 6061", "steel")
+- quote_selection: If accepting a quote, which option ("fastest", "cheapest", "balanced")
 
 Respond with a JSON object containing:
 {{
-    "intent": "QUOTE_REQUEST|SCHEDULE_REQUEST|JOB_STATUS|INVENTORY_QUERY|SCHEDULE_VIEW|GENERAL_QUERY",
+    "intent": "QUOTE_REQUEST|SCHEDULE_REQUEST|JOB_STATUS|INVENTORY_QUERY|LIST_INVENTORY|SCHEDULE_VIEW|ACCEPT_QUOTE|GENERAL_QUERY",
     "customer_name": "extracted name or null",
     "product_description": "what to manufacture or null",
     "quantity": number or null,
     "requested_date": "date string or null",
     "job_number": "if referenced or null",
     "material_type": "if mentioned or null",
+    "quote_selection": "fastest|cheapest|balanced or null",
     "clarification_needed": "question to ask if more info needed or null"
 }}"""
 
@@ -168,6 +182,8 @@ class QuantumHub:
         workflow.add_node("schedule_view", self._schedule_view_node)
         workflow.add_node("direct_response", self._direct_response_node)
         workflow.add_node("create_job", self._create_job_node)
+        workflow.add_node("list_inventory", self._list_inventory_node)
+        workflow.add_node("accept_quote", self._accept_quote_node)
 
         # Set entry point
         workflow.set_entry_point("supervisor")
@@ -181,6 +197,8 @@ class QuantumHub:
                 "job_status": "job_status",
                 "schedule_view": "schedule_view",
                 "create_job": "create_job",
+                "list_inventory": "list_inventory",
+                "accept_quote": "accept_quote",
                 "direct_response": "direct_response",
                 "end": END,
             }
@@ -199,6 +217,8 @@ class QuantumHub:
         workflow.add_edge("job_status", END)
         workflow.add_edge("schedule_view", END)
         workflow.add_edge("create_job", END)
+        workflow.add_edge("list_inventory", END)
+        workflow.add_edge("accept_quote", END)
         workflow.add_edge("direct_response", END)
 
         return workflow.compile()
@@ -215,6 +235,12 @@ class QuantumHub:
             return "job_status"
         elif intent == "SCHEDULE_VIEW":
             return "schedule_view"
+        elif intent == "LIST_INVENTORY":
+            return "list_inventory"
+        elif intent == "INVENTORY_QUERY":
+            return "list_inventory"  # Route specific queries to list too
+        elif intent == "ACCEPT_QUOTE":
+            return "accept_quote"
         elif state.get("error"):
             return "direct_response"
         else:
@@ -267,6 +293,7 @@ class QuantumHub:
                 "product_description": parsed.get("product_description"),
                 "quantity": parsed.get("quantity"),
                 "requested_date": parsed.get("requested_date"),
+                "quote_selection": parsed.get("quote_selection"),
                 "next_step": parsed.get("intent", "GENERAL_QUERY").lower()
             }
 
@@ -278,10 +305,24 @@ class QuantumHub:
                 return {"intent": "QUOTE_REQUEST", "next_step": "parallel_analysis"}
             elif any(word in user_lower for word in ["schedule", "reserve", "book"]):
                 return {"intent": "SCHEDULE_REQUEST", "next_step": "create_job"}
-            elif any(word in user_lower for word in ["status", "where", "job"]):
+            elif any(word in user_lower for word in ["status", "where is", "job"]):
                 return {"intent": "JOB_STATUS", "next_step": "job_status"}
-            elif any(word in user_lower for word in ["inventory", "stock", "materials"]):
-                return {"intent": "INVENTORY_QUERY", "next_step": "direct_response"}
+            elif any(word in user_lower for word in ["accept", "go with", "choose", "select"]) and any(word in user_lower for word in ["fastest", "cheapest", "balanced", "option"]):
+                # Determine which option
+                selection = None
+                if "fastest" in user_lower:
+                    selection = "fastest"
+                elif "cheapest" in user_lower:
+                    selection = "cheapest"
+                elif "balanced" in user_lower:
+                    selection = "balanced"
+                return {"intent": "ACCEPT_QUOTE", "quote_selection": selection, "next_step": "accept_quote"}
+            elif any(word in user_lower for word in ["show inventory", "list inventory", "all items", "what materials", "list materials", "show materials"]):
+                return {"intent": "LIST_INVENTORY", "next_step": "list_inventory"}
+            elif any(word in user_lower for word in ["inventory", "stock", "do we have"]):
+                return {"intent": "INVENTORY_QUERY", "next_step": "list_inventory"}
+            elif any(word in user_lower for word in ["production schedule", "show schedule", "view schedule"]):
+                return {"intent": "SCHEDULE_VIEW", "next_step": "schedule_view"}
             else:
                 return {"intent": "GENERAL_QUERY", "next_step": "direct_response"}
 
@@ -647,6 +688,141 @@ Please synthesize these into a clear response for the customer.
                     )]
                 }
 
+    async def _list_inventory_node(self, state: AgentState) -> dict:
+        """List Inventory Node - Returns all inventory items."""
+        async with get_db_context() as db:
+            from sqlalchemy import select
+            result = await db.execute(select(Item))
+            items = list(result.scalars().all())
+
+            if not items:
+                return {
+                    "response_type": "inventory_list",
+                    "response_data": {
+                        "message": "No inventory items found.",
+                        "items": []
+                    },
+                    "messages": [AIMessage(
+                        content="No inventory items found in the system. Use /api/seed to add demo data."
+                    )]
+                }
+
+            items_list = [
+                {
+                    "id": item.id,
+                    "name": item.name,
+                    "sku": item.sku,
+                    "category": item.category,
+                    "quantity_on_hand": item.quantity_on_hand,
+                    "cost_per_unit": float(item.cost_per_unit),
+                    "reorder_point": item.reorder_point,
+                    "vendor_lead_time_days": item.vendor_lead_time_days
+                }
+                for item in items
+            ]
+
+            # Build summary message
+            summary_lines = ["**Current Inventory:**\n"]
+            for item in items_list:
+                status = "✅" if item["quantity_on_hand"] >= (item["reorder_point"] or 0) else "⚠️ Low"
+                summary_lines.append(
+                    f"- **{item['name']}** ({item['sku']}): {item['quantity_on_hand']} units @ ${item['cost_per_unit']:.2f}/ea {status}"
+                )
+
+            return {
+                "response_type": "inventory_list",
+                "response_data": {
+                    "message": f"Found {len(items)} inventory items.",
+                    "items": items_list
+                },
+                "messages": [AIMessage(content="\n".join(summary_lines))]
+            }
+
+    async def _accept_quote_node(self, state: AgentState) -> dict:
+        """Accept Quote Node - Creates job from accepted quote option."""
+        quote_selection = state.get("quote_selection")
+        thread_id = state.get("thread_id")
+        pending_data = state.get("pending_quote_data")
+
+        # If no pending quote data in state, check conversation history
+        if not pending_data and thread_id:
+            async with get_db_context() as db:
+                conv_service = ConversationService(db)
+                pending_data = await conv_service.get_pending_quote(thread_id)
+
+        if not pending_data:
+            return {
+                "response_type": "error",
+                "response_data": {"error": "No pending quote found"},
+                "messages": [AIMessage(
+                    content="I don't see a pending quote to accept. Please request a quote first, then tell me which option you'd like."
+                )]
+            }
+
+        if not quote_selection:
+            return {
+                "response_type": "clarification",
+                "response_data": {"options": ["fastest", "cheapest", "balanced"]},
+                "messages": [AIMessage(
+                    content="Which quote option would you like to accept?\n\n"
+                           "- **Fastest** - Priority production\n"
+                           "- **Cheapest** - Most economical\n"
+                           "- **Balanced** - Best value (recommended)"
+                )]
+            }
+
+        # Get the selected quote option
+        quote_options = pending_data.get("pending_quote", {})
+        selected_option = quote_options.get(quote_selection.lower())
+
+        if not selected_option:
+            return {
+                "response_type": "error",
+                "response_data": {"error": f"Invalid option: {quote_selection}"},
+                "messages": [AIMessage(
+                    content=f"'{quote_selection}' is not a valid option. Please choose 'fastest', 'cheapest', or 'balanced'."
+                )]
+            }
+
+        # Create the job
+        async with get_db_context() as db:
+            job_service = JobService(db)
+            customer_name = pending_data.get("customer_name", "Customer")
+            description = pending_data.get("product_description", "Custom order")
+
+            job = await job_service.create_job(
+                customer_name=customer_name,
+                description=f"{description} - {quote_selection.upper()} option"
+            )
+
+            # Clear the pending quote
+            if thread_id:
+                conv_service = ConversationService(db)
+                await conv_service.clear_pending_quote(thread_id)
+
+            await db.commit()
+
+            return {
+                "response_type": "confirmation",
+                "response_data": {
+                    "job_id": job.id,
+                    "job_number": job.job_number,
+                    "selected_option": quote_selection,
+                    "price": selected_option.get("total_price"),
+                    "delivery_date": selected_option.get("estimated_delivery_date"),
+                    "status": job.status.value
+                },
+                "job_id": job.id,
+                "messages": [AIMessage(
+                    content=f"**Quote Accepted!**\n\n"
+                           f"Job **{job.job_number}** has been created for {customer_name}.\n\n"
+                           f"- **Option:** {quote_selection.capitalize()}\n"
+                           f"- **Price:** ${selected_option.get('total_price', 0):,.2f}\n"
+                           f"- **Estimated Delivery:** {selected_option.get('estimated_delivery_date', 'TBD')[:10]}\n\n"
+                           f"The job is now in **{job.status.value}** status."
+                )]
+            }
+
     async def _direct_response_node(self, state: AgentState) -> dict:
         """Direct Response Node - Handles general queries and errors."""
         error = state.get("error")
@@ -671,7 +847,8 @@ Please synthesize these into a clear response for the customer.
 - **Schedule Production**: "Schedule an emergency run for Customer X"
 - **Check Job Status**: "What's the status of job 20241231-0001?"
 - **View Schedule**: "Show me the production schedule"
-- **Check Inventory**: "Do we have aluminum 6061 in stock?"
+- **View Inventory**: "Show me current inventory"
+- **Accept Quote**: "Accept the balanced option"
 
 How can I help you today?"""
             )]
@@ -680,7 +857,8 @@ How can I help you today?"""
     async def run(
         self,
         message: str,
-        thread_id: str = "default"
+        thread_id: str = "default",
+        db: Optional[AsyncSession] = None
     ) -> dict:
         """
         Run the hub with a user message.
@@ -688,12 +866,24 @@ How can I help you today?"""
         Args:
             message: User's input message
             thread_id: Conversation thread ID for state persistence
+            db: Optional database session for conversation history
 
         Returns:
             Final state with response
         """
+        # Load conversation history if db provided
+        conversation_history = []
+        pending_quote_data = None
+
+        if db:
+            conv_service = ConversationService(db)
+            conversation_history = await conv_service.get_history(thread_id, limit=10)
+            pending_quote_data = await conv_service.get_pending_quote(thread_id)
+
         initial_state: AgentState = {
             "messages": [HumanMessage(content=message)],
+            "thread_id": thread_id,
+            "conversation_history": conversation_history,
             "next_step": "",
             "intent": "",
             "job_id": None,
@@ -704,6 +894,8 @@ How can I help you today?"""
             "bom": None,
             "labor_hours": 8,
             "machine_type": "cnc",
+            "quote_selection": None,
+            "pending_quote_data": pending_quote_data,
             "inventory_data": None,
             "schedule_data": None,
             "cost_data": None,
@@ -715,6 +907,18 @@ How can I help you today?"""
 
         # Run the graph
         result = await self.graph.ainvoke(initial_state)
+
+        # Store pending quote if this was a quote response
+        if db and result.get("response_type") == "quote_options":
+            response_data = result.get("response_data", {})
+            if response_data.get("options"):
+                conv_service = ConversationService(db)
+                await conv_service.store_pending_quote(
+                    thread_id=thread_id,
+                    quote_options=response_data.get("options", {}),
+                    customer_name=response_data.get("customer_name", "Customer"),
+                    product_description=response_data.get("product_description", "Custom order")
+                )
 
         return result
 

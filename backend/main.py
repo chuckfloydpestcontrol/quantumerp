@@ -139,10 +139,11 @@ async def chat(
         content=input.message
     )
     db.add(user_message)
+    await db.flush()  # Flush to persist before running hub
 
-    # Run the hub
+    # Run the hub with db session for conversation context
     hub = get_hub()
-    result = await hub.run(input.message, thread_id)
+    result = await hub.run(input.message, thread_id, db=db)
 
     # Extract response
     messages = result.get("messages", [])
