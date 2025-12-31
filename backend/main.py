@@ -146,7 +146,7 @@ app.add_middleware(
 # Health & Status Endpoints
 # ============================================================================
 
-@app.get("/health")
+@app.get("/health", tags=["System"])
 async def health_check():
     """Health check endpoint."""
     return {
@@ -156,7 +156,7 @@ async def health_check():
     }
 
 
-@app.get("/api/status")
+@app.get("/api/status", tags=["System"])
 async def system_status(db: AsyncSession = Depends(get_db)):
     """System status with component health."""
     # Check database
@@ -181,7 +181,7 @@ async def system_status(db: AsyncSession = Depends(get_db)):
 # Chat / Hub Endpoint (Primary Interface)
 # ============================================================================
 
-@app.post("/api/chat", response_model=ChatMessageResponse)
+@app.post("/api/chat", response_model=ChatMessageResponse, tags=["Chat"])
 async def chat(
     input: ChatMessageInput,
     db: AsyncSession = Depends(get_db)
@@ -191,6 +191,13 @@ async def chat(
 
     This is the main interface for the prompt-driven ERP.
     User messages are processed by the LangGraph orchestrator.
+
+    **Example messages:**
+    - "I need a quote for 50 aluminum brackets"
+    - "list jobs"
+    - "show inventory"
+    - "create job for Acme Corp"
+    - "help" (shows available commands)
     """
     thread_id = input.thread_id or str(uuid.uuid4())
 
@@ -242,7 +249,7 @@ async def chat(
 # Job Endpoints
 # ============================================================================
 
-@app.post("/api/jobs", response_model=JobResponse)
+@app.post("/api/jobs", response_model=JobResponse, tags=["Jobs"])
 async def create_job(
     job_data: JobCreate,
     db: AsyncSession = Depends(get_db)
@@ -261,7 +268,7 @@ async def create_job(
     return job
 
 
-@app.post("/api/jobs/dynamic", response_model=JobResponse)
+@app.post("/api/jobs/dynamic", response_model=JobResponse, tags=["Jobs"])
 async def create_dynamic_job(
     job_data: JobCreateDynamic,
     db: AsyncSession = Depends(get_db)
@@ -302,7 +309,7 @@ async def create_dynamic_job(
     return job
 
 
-@app.get("/api/jobs", response_model=list[JobResponse])
+@app.get("/api/jobs", response_model=list[JobResponse], tags=["Jobs"])
 async def list_jobs(
     status: Optional[JobStatus] = None,
     db: AsyncSession = Depends(get_db)
@@ -321,7 +328,7 @@ async def list_jobs(
     return jobs
 
 
-@app.get("/api/jobs/{job_id}", response_model=JobResponse)
+@app.get("/api/jobs/{job_id}", response_model=JobResponse, tags=["Jobs"])
 async def get_job(job_id: int, db: AsyncSession = Depends(get_db)):
     """Get a specific job by ID."""
     job_service = JobService(db)
@@ -331,7 +338,7 @@ async def get_job(job_id: int, db: AsyncSession = Depends(get_db)):
     return job
 
 
-@app.patch("/api/jobs/{job_id}", response_model=JobResponse)
+@app.patch("/api/jobs/{job_id}", response_model=JobResponse, tags=["Jobs"])
 async def update_job(
     job_id: int,
     update_data: JobUpdate,
@@ -350,7 +357,7 @@ async def update_job(
     return job
 
 
-@app.post("/api/jobs/{job_id}/attach-po")
+@app.post("/api/jobs/{job_id}/attach-po", tags=["Jobs"])
 async def attach_po(
     job_id: int,
     po_number: str,
@@ -367,7 +374,7 @@ async def attach_po(
     }
 
 
-@app.post("/api/jobs/{job_id}/accept-quote")
+@app.post("/api/jobs/{job_id}/accept-quote", tags=["Jobs"])
 async def accept_quote(
     job_id: int,
     quote_type: QuoteType,
@@ -388,7 +395,7 @@ async def accept_quote(
 # Inventory Endpoints
 # ============================================================================
 
-@app.post("/api/items", response_model=ItemResponse)
+@app.post("/api/items", response_model=ItemResponse, tags=["Inventory"])
 async def create_item(
     item_data: ItemCreate,
     db: AsyncSession = Depends(get_db)
@@ -400,7 +407,7 @@ async def create_item(
     return item
 
 
-@app.get("/api/items", response_model=list[ItemResponse])
+@app.get("/api/items", response_model=list[ItemResponse], tags=["Inventory"])
 async def list_items(
     category: Optional[str] = None,
     db: AsyncSession = Depends(get_db)
@@ -415,7 +422,7 @@ async def list_items(
     return items
 
 
-@app.get("/api/items/{item_id}", response_model=ItemResponse)
+@app.get("/api/items/{item_id}", response_model=ItemResponse, tags=["Inventory"])
 async def get_item(item_id: int, db: AsyncSession = Depends(get_db)):
     """Get a specific item."""
     result = await db.execute(select(Item).where(Item.id == item_id))
@@ -425,7 +432,7 @@ async def get_item(item_id: int, db: AsyncSession = Depends(get_db)):
     return item
 
 
-@app.get("/api/items/check-stock/{item_id}")
+@app.get("/api/items/check-stock/{item_id}", tags=["Inventory"])
 async def check_stock(
     item_id: int,
     quantity: int = 1,
@@ -440,7 +447,7 @@ async def check_stock(
         raise HTTPException(status_code=404, detail=str(e))
 
 
-@app.get("/api/inventory/low-stock")
+@app.get("/api/inventory/low-stock", tags=["Inventory"])
 async def get_low_stock(db: AsyncSession = Depends(get_db)):
     """Get items below reorder point."""
     inventory_service = InventoryService(db)
@@ -452,7 +459,7 @@ async def get_low_stock(db: AsyncSession = Depends(get_db)):
 # Machine & Scheduling Endpoints
 # ============================================================================
 
-@app.post("/api/machines", response_model=MachineResponse)
+@app.post("/api/machines", response_model=MachineResponse, tags=["Scheduling"])
 async def create_machine(
     machine_data: MachineCreate,
     db: AsyncSession = Depends(get_db)
@@ -464,14 +471,14 @@ async def create_machine(
     return machine
 
 
-@app.get("/api/machines", response_model=list[MachineResponse])
+@app.get("/api/machines", response_model=list[MachineResponse], tags=["Scheduling"])
 async def list_machines(db: AsyncSession = Depends(get_db)):
     """List all machines."""
     result = await db.execute(select(Machine))
     return list(result.scalars().all())
 
 
-@app.get("/api/schedule")
+@app.get("/api/schedule", tags=["Scheduling"])
 async def get_schedule(
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
@@ -490,7 +497,7 @@ async def get_schedule(
     }
 
 
-@app.get("/api/schedule/find-slot")
+@app.get("/api/schedule/find-slot", tags=["Scheduling"])
 async def find_slot(
     machine_type: str,
     duration_hours: int,
@@ -509,7 +516,7 @@ async def find_slot(
 # Quoting Endpoints
 # ============================================================================
 
-@app.post("/api/quotes/calculate")
+@app.post("/api/quotes/calculate", tags=["Quoting"])
 async def calculate_quote(
     bom: list[dict],
     labor_hours: float,
@@ -528,7 +535,7 @@ async def calculate_quote(
     return result
 
 
-@app.post("/api/quotes/parallel")
+@app.post("/api/quotes/parallel", tags=["Quoting"])
 async def parallel_quote(
     bom: list[dict],
     labor_hours: float,
@@ -563,7 +570,7 @@ async def parallel_quote(
     }
 
 
-@app.get("/api/quotes", response_model=list[QuoteResponse])
+@app.get("/api/quotes", response_model=list[QuoteResponse], tags=["Quoting"])
 async def list_quotes(db: AsyncSession = Depends(get_db)):
     """List all quotes."""
     result = await db.execute(select(Quote))
@@ -574,7 +581,7 @@ async def list_quotes(db: AsyncSession = Depends(get_db)):
 # Customer Endpoints
 # ============================================================================
 
-@app.post("/api/customers", response_model=CustomerResponse)
+@app.post("/api/customers", response_model=CustomerResponse, tags=["Customers"])
 async def create_customer(
     customer_data: CustomerCreate,
     db: AsyncSession = Depends(get_db)
@@ -596,7 +603,7 @@ async def create_customer(
     return customer
 
 
-@app.get("/api/customers", response_model=list[CustomerResponse])
+@app.get("/api/customers", response_model=list[CustomerResponse], tags=["Customers"])
 async def list_customers(
     active_only: bool = True,
     db: AsyncSession = Depends(get_db)
@@ -607,7 +614,7 @@ async def list_customers(
     return customers
 
 
-@app.get("/api/customers/search", response_model=list[CustomerResponse])
+@app.get("/api/customers/search", response_model=list[CustomerResponse], tags=["Customers"])
 async def search_customers(
     query: str,
     db: AsyncSession = Depends(get_db)
@@ -618,7 +625,7 @@ async def search_customers(
     return customers
 
 
-@app.get("/api/customers/{customer_id}", response_model=CustomerResponse)
+@app.get("/api/customers/{customer_id}", response_model=CustomerResponse, tags=["Customers"])
 async def get_customer(customer_id: int, db: AsyncSession = Depends(get_db)):
     """Get a specific customer by ID."""
     customer_service = CustomerService(db)
@@ -628,7 +635,7 @@ async def get_customer(customer_id: int, db: AsyncSession = Depends(get_db)):
     return customer
 
 
-@app.patch("/api/customers/{customer_id}", response_model=CustomerResponse)
+@app.patch("/api/customers/{customer_id}", response_model=CustomerResponse, tags=["Customers"])
 async def update_customer(
     customer_id: int,
     update_data: CustomerUpdate,
@@ -646,7 +653,7 @@ async def update_customer(
     return customer
 
 
-@app.delete("/api/customers/{customer_id}")
+@app.delete("/api/customers/{customer_id}", tags=["Customers"])
 async def deactivate_customer(
     customer_id: int,
     db: AsyncSession = Depends(get_db)
@@ -708,7 +715,7 @@ async def websocket_endpoint(websocket: WebSocket):
 # Seed Data Endpoint (Development)
 # ============================================================================
 
-@app.post("/api/seed")
+@app.post("/api/seed", tags=["System"])
 async def seed_data(db: AsyncSession = Depends(get_db)):
     """Seed database with demo data (development only)."""
     if not settings.debug:
