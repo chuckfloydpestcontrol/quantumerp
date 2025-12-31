@@ -1,5 +1,6 @@
 import React from 'react';
 import { User, Bot, Loader2 } from 'lucide-react';
+import ReactMarkdown from 'react-markdown';
 import { UIResponseType } from '../types';
 import { GenerativeUI } from './GenerativeUI';
 
@@ -59,7 +60,13 @@ export function ChatMessage({
                     : 'bg-gray-100 text-gray-800'
                 }`}
               >
-                <div className="whitespace-pre-wrap">{content}</div>
+                {isUser ? (
+                  <div className="whitespace-pre-wrap">{content}</div>
+                ) : (
+                  <div className="prose prose-sm max-w-none prose-headings:mt-2 prose-headings:mb-1 prose-p:my-1 prose-ul:my-1 prose-li:my-0">
+                    <ReactMarkdown>{content}</ReactMarkdown>
+                  </div>
+                )}
               </div>
             )}
 
