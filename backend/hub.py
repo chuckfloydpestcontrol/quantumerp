@@ -68,6 +68,18 @@ class AgentState(TypedDict):
     search_query: Optional[str]
     adjustment_quantity: Optional[int]
     item_name: Optional[str]
+    item_sku: Optional[str]
+    item_cost: Optional[float]
+    item_category: Optional[str]
+    customer_email: Optional[str]
+
+    # Additional fields for new intents
+    quote_number: Optional[str]
+    reorder_quantity: Optional[int]
+    machine_name: Optional[str]
+    hourly_rate: Optional[float]
+    new_priority: Optional[int]
+    new_delivery_date: Optional[str]
 
     # Parallel execution results (Fan-In collection)
     inventory_data: Optional[dict]
@@ -101,10 +113,12 @@ You support these workflows:
 - ACCEPT_QUOTE: User wants to accept a quote option (e.g., "accept the balanced option")
 
 **Job Management:**
+- CREATE_JOB: Create a new job directly (e.g., "create job for Acme Corp - 50 steel brackets")
 - SCHEDULE_REQUEST: Schedule production (Dynamic Entry - no PO required)
 - JOB_STATUS: Get status overview of jobs
 - GET_JOB_DETAILS: Get details of a specific job by number (e.g., "details for job 20251231-0001")
 - SEARCH_JOBS: Search for jobs by customer or description
+- UPDATE_JOB: Update job details (e.g., "update job priority to 1", "change delivery date")
 - START_JOB: Start production on a job (e.g., "start job 20251231-0001", "begin production")
 - COMPLETE_JOB: Mark a job as complete (e.g., "complete job 20251231-0001", "job finished")
 - CANCEL_JOB: Cancel a job (e.g., "cancel job 20251231-0001")
@@ -115,9 +129,21 @@ You support these workflows:
 - INVENTORY_QUERY: Check specific item stock
 - LOW_STOCK_ALERT: Show items below reorder point
 - ADJUST_INVENTORY: Add or remove stock (e.g., "add 50 units of aluminum", "received shipment")
+- ADD_ITEM: Add new inventory item (e.g., "add new item Copper Wire, SKU CU-001, $25/unit")
+- REORDER_ITEM: Trigger reorder/restock (e.g., "reorder aluminum", "restock steel bars")
+
+**Customers:**
+- ADD_CUSTOMER: Add a new customer (e.g., "add customer Acme Corp, email acme@example.com")
+- LIST_CUSTOMERS: List all customers (e.g., "show customers", "list customers")
+
+**Quoting:**
+- VIEW_QUOTE: View a specific quote (e.g., "show quote Q-20251231-0001")
+- LIST_QUOTES: List all quotes (e.g., "show pending quotes", "list quotes")
 
 **Scheduling & Analytics:**
 - SCHEDULE_VIEW: View production schedule
+- LIST_MACHINES: List all machines (e.g., "show machines", "list equipment")
+- ADD_MACHINE: Add a new machine (e.g., "add machine CNC-Mill-3, type cnc, $80/hour")
 - MACHINE_UTILIZATION: Show machine usage/capacity
 - FINANCIAL_HOLD_REPORT: Show jobs awaiting PO
 
@@ -125,32 +151,53 @@ You support these workflows:
 
 Extract these details when applicable:
 - customer_name: Who is the customer
+- customer_email: Customer email address
 - product_description: What to manufacture
 - quantity: How many units
 - requested_date: When needed
 - job_number: Job reference (e.g., "20251231-0001")
 - material_type: Material mentioned (e.g., "aluminum 6061")
 - quote_selection: Which option ("fastest", "cheapest", "balanced")
+- quote_number: Quote reference (e.g., "Q-20251231-0001")
 - po_number: PO number if attaching
 - search_query: Search term for jobs
-- new_status: Target status for job updates
 - adjustment_quantity: Amount to add/remove from inventory
-- item_name: Inventory item name or SKU
+- item_name: Inventory item name
+- item_sku: Item SKU/part number
+- item_cost: Cost per unit
+- item_category: Item category (raw_material, hardware, consumable)
+- reorder_quantity: Quantity to reorder
+- machine_name: Machine name
+- machine_type: Machine type (cnc, lathe, etc.)
+- hourly_rate: Machine hourly rate
+- new_priority: New priority value (1-10)
+- new_delivery_date: New delivery date
 
 Respond with a JSON object:
 {{
-    "intent": "QUOTE_REQUEST|ACCEPT_QUOTE|SCHEDULE_REQUEST|JOB_STATUS|GET_JOB_DETAILS|SEARCH_JOBS|START_JOB|COMPLETE_JOB|CANCEL_JOB|ATTACH_PO|LIST_INVENTORY|INVENTORY_QUERY|LOW_STOCK_ALERT|ADJUST_INVENTORY|SCHEDULE_VIEW|MACHINE_UTILIZATION|FINANCIAL_HOLD_REPORT|GENERAL_QUERY",
+    "intent": "QUOTE_REQUEST|ACCEPT_QUOTE|CREATE_JOB|SCHEDULE_REQUEST|JOB_STATUS|GET_JOB_DETAILS|SEARCH_JOBS|UPDATE_JOB|START_JOB|COMPLETE_JOB|CANCEL_JOB|ATTACH_PO|LIST_INVENTORY|INVENTORY_QUERY|LOW_STOCK_ALERT|ADJUST_INVENTORY|ADD_ITEM|REORDER_ITEM|ADD_CUSTOMER|LIST_CUSTOMERS|VIEW_QUOTE|LIST_QUOTES|SCHEDULE_VIEW|LIST_MACHINES|ADD_MACHINE|MACHINE_UTILIZATION|FINANCIAL_HOLD_REPORT|GENERAL_QUERY",
     "customer_name": "extracted or null",
+    "customer_email": "email or null",
     "product_description": "what to manufacture or null",
     "quantity": "number or null",
     "requested_date": "date string or null",
     "job_number": "job number or null",
     "material_type": "material or null",
     "quote_selection": "fastest|cheapest|balanced or null",
+    "quote_number": "quote number or null",
     "po_number": "PO number or null",
     "search_query": "search term or null",
     "adjustment_quantity": "number or null",
-    "item_name": "item name/SKU or null",
+    "item_name": "item name or null",
+    "item_sku": "SKU or null",
+    "item_cost": "cost per unit or null",
+    "item_category": "category or null",
+    "reorder_quantity": "quantity or null",
+    "machine_name": "machine name or null",
+    "machine_type": "machine type or null",
+    "hourly_rate": "rate or null",
+    "new_priority": "priority 1-10 or null",
+    "new_delivery_date": "date string or null",
     "clarification_needed": "question if more info needed or null"
 }}"""
 
@@ -221,8 +268,10 @@ class QuantumHub:
         # Add nodes - Job Management
         workflow.add_node("job_status", self._job_status_node)
         workflow.add_node("create_job", self._create_job_node)
+        workflow.add_node("create_job_direct", self._create_job_direct_node)
         workflow.add_node("get_job_details", self._get_job_details_node)
         workflow.add_node("search_jobs", self._search_jobs_node)
+        workflow.add_node("update_job", self._update_job_node)
         workflow.add_node("update_job_status", self._update_job_status_node)
         workflow.add_node("attach_po", self._attach_po_node)
 
@@ -230,9 +279,21 @@ class QuantumHub:
         workflow.add_node("list_inventory", self._list_inventory_node)
         workflow.add_node("low_stock_alert", self._low_stock_alert_node)
         workflow.add_node("adjust_inventory", self._adjust_inventory_node)
+        workflow.add_node("add_item", self._add_item_node)
+        workflow.add_node("reorder_item", self._reorder_item_node)
 
-        # Add nodes - Analytics
+        # Add nodes - Customer
+        workflow.add_node("add_customer", self._add_customer_node)
+        workflow.add_node("list_customers", self._list_customers_node)
+
+        # Add nodes - Quoting (view/list)
+        workflow.add_node("view_quote", self._view_quote_node)
+        workflow.add_node("list_quotes", self._list_quotes_node)
+
+        # Add nodes - Analytics/Machines
         workflow.add_node("schedule_view", self._schedule_view_node)
+        workflow.add_node("list_machines", self._list_machines_node)
+        workflow.add_node("add_machine", self._add_machine_node)
         workflow.add_node("machine_utilization", self._machine_utilization_node)
         workflow.add_node("financial_hold_report", self._financial_hold_report_node)
 
@@ -247,19 +308,30 @@ class QuantumHub:
                 # Quoting
                 "parallel_analysis": "inventory_check",
                 "accept_quote": "accept_quote",
+                "view_quote": "view_quote",
+                "list_quotes": "list_quotes",
                 # Job Management
                 "job_status": "job_status",
                 "create_job": "create_job",
+                "create_job_direct": "create_job_direct",
                 "get_job_details": "get_job_details",
                 "search_jobs": "search_jobs",
+                "update_job": "update_job",
                 "update_job_status": "update_job_status",
                 "attach_po": "attach_po",
                 # Inventory
                 "list_inventory": "list_inventory",
                 "low_stock_alert": "low_stock_alert",
                 "adjust_inventory": "adjust_inventory",
-                # Analytics
+                "add_item": "add_item",
+                "reorder_item": "reorder_item",
+                # Customer
+                "add_customer": "add_customer",
+                "list_customers": "list_customers",
+                # Machines/Analytics
                 "schedule_view": "schedule_view",
+                "list_machines": "list_machines",
+                "add_machine": "add_machine",
                 "machine_utilization": "machine_utilization",
                 "financial_hold_report": "financial_hold_report",
                 # Default
@@ -278,16 +350,26 @@ class QuantumHub:
         # Terminal nodes
         workflow.add_edge("synthesizer", END)
         workflow.add_edge("accept_quote", END)
+        workflow.add_edge("view_quote", END)
+        workflow.add_edge("list_quotes", END)
         workflow.add_edge("job_status", END)
         workflow.add_edge("create_job", END)
+        workflow.add_edge("create_job_direct", END)
         workflow.add_edge("get_job_details", END)
         workflow.add_edge("search_jobs", END)
+        workflow.add_edge("update_job", END)
         workflow.add_edge("update_job_status", END)
         workflow.add_edge("attach_po", END)
         workflow.add_edge("list_inventory", END)
         workflow.add_edge("low_stock_alert", END)
         workflow.add_edge("adjust_inventory", END)
+        workflow.add_edge("add_item", END)
+        workflow.add_edge("reorder_item", END)
+        workflow.add_edge("add_customer", END)
+        workflow.add_edge("list_customers", END)
         workflow.add_edge("schedule_view", END)
+        workflow.add_edge("list_machines", END)
+        workflow.add_edge("add_machine", END)
         workflow.add_edge("machine_utilization", END)
         workflow.add_edge("financial_hold_report", END)
         workflow.add_edge("direct_response", END)
@@ -303,6 +385,10 @@ class QuantumHub:
             return "parallel_analysis"
         elif intent == "ACCEPT_QUOTE":
             return "accept_quote"
+        elif intent == "VIEW_QUOTE":
+            return "view_quote"
+        elif intent == "LIST_QUOTES":
+            return "list_quotes"
 
         # Job Management
         elif intent == "SCHEDULE_REQUEST":
@@ -313,6 +399,8 @@ class QuantumHub:
             return "get_job_details"
         elif intent == "SEARCH_JOBS":
             return "search_jobs"
+        elif intent == "UPDATE_JOB":
+            return "update_job"
         elif intent in ("START_JOB", "COMPLETE_JOB", "CANCEL_JOB"):
             return "update_job_status"
         elif intent == "ATTACH_PO":
@@ -327,6 +415,26 @@ class QuantumHub:
             return "low_stock_alert"
         elif intent == "ADJUST_INVENTORY":
             return "adjust_inventory"
+        elif intent == "ADD_ITEM":
+            return "add_item"
+        elif intent == "REORDER_ITEM":
+            return "reorder_item"
+
+        # Customer
+        elif intent == "ADD_CUSTOMER":
+            return "add_customer"
+        elif intent == "LIST_CUSTOMERS":
+            return "list_customers"
+
+        # Job - Direct creation
+        elif intent == "CREATE_JOB":
+            return "create_job_direct"
+
+        # Machines
+        elif intent == "LIST_MACHINES":
+            return "list_machines"
+        elif intent == "ADD_MACHINE":
+            return "add_machine"
 
         # Analytics
         elif intent == "SCHEDULE_VIEW":
@@ -387,14 +495,25 @@ class QuantumHub:
                 "intent": parsed.get("intent", "GENERAL_QUERY"),
                 "job_number": parsed.get("job_number"),
                 "customer_name": parsed.get("customer_name"),
+                "customer_email": parsed.get("customer_email"),
                 "product_description": parsed.get("product_description"),
                 "quantity": parsed.get("quantity"),
                 "requested_date": parsed.get("requested_date"),
                 "quote_selection": parsed.get("quote_selection"),
+                "quote_number": parsed.get("quote_number"),
                 "po_number": parsed.get("po_number"),
                 "search_query": parsed.get("search_query"),
                 "adjustment_quantity": parsed.get("adjustment_quantity"),
                 "item_name": parsed.get("item_name"),
+                "item_sku": parsed.get("item_sku"),
+                "item_cost": parsed.get("item_cost"),
+                "item_category": parsed.get("item_category"),
+                "reorder_quantity": parsed.get("reorder_quantity"),
+                "machine_name": parsed.get("machine_name"),
+                "machine_type": parsed.get("machine_type"),
+                "hourly_rate": parsed.get("hourly_rate"),
+                "new_priority": parsed.get("new_priority"),
+                "new_delivery_date": parsed.get("new_delivery_date"),
                 "next_step": parsed.get("intent", "GENERAL_QUERY").lower()
             }
 
@@ -437,12 +556,44 @@ class QuantumHub:
             # Inventory
             elif any(word in user_lower for word in ["low stock", "reorder", "running low", "need to order"]):
                 return {"intent": "LOW_STOCK_ALERT", "next_step": "low_stock_alert"}
+            elif any(word in user_lower for word in ["add new item", "new item", "create item", "add item"]) and not any(word in user_lower for word in ["add inventory", "adjust"]):
+                return {"intent": "ADD_ITEM", "next_step": "add_item"}
             elif any(word in user_lower for word in ["add inventory", "received", "adjust stock", "add stock", "remove stock"]):
                 return {"intent": "ADJUST_INVENTORY", "next_step": "adjust_inventory"}
             elif any(word in user_lower for word in ["show inventory", "list inventory", "all items", "list materials"]):
                 return {"intent": "LIST_INVENTORY", "next_step": "list_inventory"}
             elif any(word in user_lower for word in ["inventory", "stock", "do we have"]):
                 return {"intent": "INVENTORY_QUERY", "next_step": "list_inventory"}
+
+            # Customer
+            elif any(word in user_lower for word in ["add customer", "new customer", "create customer"]):
+                return {"intent": "ADD_CUSTOMER", "next_step": "add_customer"}
+            elif any(word in user_lower for word in ["list customers", "show customers", "all customers"]):
+                return {"intent": "LIST_CUSTOMERS", "next_step": "list_customers"}
+
+            # Direct job creation (without quote)
+            elif any(word in user_lower for word in ["create job", "new job", "add job"]) and "quote" not in user_lower:
+                return {"intent": "CREATE_JOB", "next_step": "create_job_direct"}
+
+            # Job update
+            elif any(word in user_lower for word in ["update job", "change job", "modify job", "change priority", "update priority"]):
+                return {"intent": "UPDATE_JOB", "job_number": job_number, "next_step": "update_job"}
+
+            # Quoting - view/list
+            elif any(word in user_lower for word in ["view quote", "show quote", "quote details"]):
+                return {"intent": "VIEW_QUOTE", "next_step": "view_quote"}
+            elif any(word in user_lower for word in ["list quotes", "show quotes", "all quotes", "pending quotes"]):
+                return {"intent": "LIST_QUOTES", "next_step": "list_quotes"}
+
+            # Reorder
+            elif any(word in user_lower for word in ["reorder", "restock"]) and "point" not in user_lower:
+                return {"intent": "REORDER_ITEM", "next_step": "reorder_item"}
+
+            # Machines
+            elif any(word in user_lower for word in ["list machines", "show machines", "all machines", "equipment list"]):
+                return {"intent": "LIST_MACHINES", "next_step": "list_machines"}
+            elif any(word in user_lower for word in ["add machine", "new machine", "create machine"]):
+                return {"intent": "ADD_MACHINE", "next_step": "add_machine"}
 
             # Analytics
             elif any(word in user_lower for word in ["machine utilization", "machine usage", "capacity"]):
@@ -1160,6 +1311,515 @@ Please synthesize these into a clear response for the customer.
                 "messages": [AIMessage(content="\n".join(lines))]
             }
 
+    async def _create_job_direct_node(self, state: AgentState) -> dict:
+        """Create a job directly without going through quote workflow."""
+        customer_name = state.get("customer_name")
+        description = state.get("product_description")
+        quantity = state.get("quantity")
+
+        if not customer_name or not description:
+            return {
+                "response_type": "clarification",
+                "messages": [AIMessage(
+                    content="To create a job, I need at least the customer name and what to produce.\n\n"
+                           "Example: 'Create job for Acme Corp - 50 steel brackets'"
+                )]
+            }
+
+        async with get_db_context() as db:
+            job_service = JobService(db)
+
+            # Build full description with quantity if provided
+            full_description = f"{description}"
+            if quantity:
+                full_description = f"{quantity}x {description}"
+
+            job = await job_service.create_job(
+                customer_name=customer_name,
+                description=full_description
+            )
+
+            return {
+                "response_type": "confirmation",
+                "response_data": {
+                    "job_id": job.id,
+                    "job_number": job.job_number,
+                    "customer_name": customer_name,
+                    "description": full_description,
+                    "status": job.status.value
+                },
+                "job_id": job.id,
+                "messages": [AIMessage(
+                    content=f"**Job Created!**\n\n"
+                           f"Job **{job.job_number}** has been created.\n\n"
+                           f"- **Customer:** {customer_name}\n"
+                           f"- **Description:** {full_description}\n"
+                           f"- **Status:** {job.status.value}\n\n"
+                           f"You can now start production or attach a PO to this job."
+                )]
+            }
+
+    async def _add_item_node(self, state: AgentState) -> dict:
+        """Add a new inventory item."""
+        item_name = state.get("item_name")
+        item_sku = state.get("item_sku")
+        item_cost = state.get("item_cost")
+        item_category = state.get("item_category", "raw_material")
+        quantity = state.get("quantity") or state.get("adjustment_quantity") or 0
+
+        if not item_name:
+            return {
+                "response_type": "clarification",
+                "messages": [AIMessage(
+                    content="To add a new inventory item, I need at least the item name.\n\n"
+                           "Example: 'Add new item Copper Wire, SKU CU-001, $25/unit, category raw_material'"
+                )]
+            }
+
+        async with get_db_context() as db:
+            from sqlalchemy import select
+
+            # Check if item already exists
+            if item_sku:
+                result = await db.execute(select(Item).where(Item.sku == item_sku))
+                existing = result.scalar_one_or_none()
+                if existing:
+                    return {
+                        "response_type": "error",
+                        "messages": [AIMessage(
+                            content=f"An item with SKU **{item_sku}** already exists: {existing.name}"
+                        )]
+                    }
+
+            # Generate SKU if not provided
+            if not item_sku:
+                # Simple SKU generation: first 3 letters uppercase + counter
+                prefix = ''.join(c for c in item_name.upper() if c.isalpha())[:3]
+                result = await db.execute(select(Item).where(Item.sku.like(f"{prefix}-%")))
+                count = len(list(result.scalars().all()))
+                item_sku = f"{prefix}-{count + 1:03d}"
+
+            # Create the item
+            new_item = Item(
+                name=item_name,
+                sku=item_sku,
+                category=item_category,
+                quantity_on_hand=int(quantity),
+                cost_per_unit=float(item_cost) if item_cost else 0.0,
+                reorder_point=10,  # Default reorder point
+                vendor_lead_time_days=7  # Default lead time
+            )
+            db.add(new_item)
+            await db.commit()
+            await db.refresh(new_item)
+
+            return {
+                "response_type": "confirmation",
+                "response_data": {
+                    "item_id": new_item.id,
+                    "name": new_item.name,
+                    "sku": new_item.sku,
+                    "category": new_item.category,
+                    "quantity": new_item.quantity_on_hand,
+                    "cost": float(new_item.cost_per_unit)
+                },
+                "messages": [AIMessage(
+                    content=f"**Item Added!**\n\n"
+                           f"- **Name:** {new_item.name}\n"
+                           f"- **SKU:** {new_item.sku}\n"
+                           f"- **Category:** {new_item.category}\n"
+                           f"- **Quantity:** {new_item.quantity_on_hand} units\n"
+                           f"- **Cost:** ${float(new_item.cost_per_unit):.2f}/unit"
+                )]
+            }
+
+    async def _add_customer_node(self, state: AgentState) -> dict:
+        """Add a new customer."""
+        customer_name = state.get("customer_name")
+        customer_email = state.get("customer_email")
+
+        if not customer_name:
+            return {
+                "response_type": "clarification",
+                "messages": [AIMessage(
+                    content="To add a new customer, I need at least the customer name.\n\n"
+                           "Example: 'Add customer Acme Corp, email acme@example.com'"
+                )]
+            }
+
+        async with get_db_context() as db:
+            from sqlalchemy import select
+            from models import Customer
+
+            # Check if customer already exists
+            result = await db.execute(
+                select(Customer).where(Customer.name.ilike(customer_name))
+            )
+            existing = result.scalar_one_or_none()
+            if existing:
+                return {
+                    "response_type": "error",
+                    "messages": [AIMessage(
+                        content=f"Customer **{customer_name}** already exists (ID: {existing.id})."
+                    )]
+                }
+
+            # Create the customer
+            new_customer = Customer(
+                name=customer_name,
+                email=customer_email,
+                active=True
+            )
+            db.add(new_customer)
+            await db.commit()
+            await db.refresh(new_customer)
+
+            return {
+                "response_type": "confirmation",
+                "response_data": {
+                    "customer_id": new_customer.id,
+                    "name": new_customer.name,
+                    "email": new_customer.email
+                },
+                "messages": [AIMessage(
+                    content=f"**Customer Added!**\n\n"
+                           f"- **Name:** {new_customer.name}\n"
+                           f"- **Email:** {new_customer.email or 'Not provided'}\n"
+                           f"- **ID:** {new_customer.id}\n\n"
+                           f"You can now create jobs for this customer."
+                )]
+            }
+
+    async def _list_customers_node(self, state: AgentState) -> dict:
+        """List all customers."""
+        async with get_db_context() as db:
+            from services.customer import CustomerService
+            customer_service = CustomerService(db)
+            customers = await customer_service.list_customers(active_only=False)
+
+            if not customers:
+                return {
+                    "response_type": "customer_list",
+                    "response_data": {"customers": []},
+                    "messages": [AIMessage(content="No customers found in the system.")]
+                }
+
+            lines = ["**Customer List:**\n"]
+            for c in customers:
+                status = "Active" if c.active else "Inactive"
+                email_info = f" ({c.email})" if c.email else ""
+                lines.append(f"- **{c.name}**{email_info} - {status}")
+
+            lines.append(f"\n_Total: {len(customers)} customer(s)_")
+
+            return {
+                "response_type": "customer_list",
+                "response_data": {
+                    "customers": [
+                        {"id": c.id, "name": c.name, "email": c.email, "active": c.active}
+                        for c in customers
+                    ]
+                },
+                "messages": [AIMessage(content="\n".join(lines))]
+            }
+
+    async def _list_machines_node(self, state: AgentState) -> dict:
+        """List all machines."""
+        async with get_db_context() as db:
+            from sqlalchemy import select
+            from models import Machine
+
+            result = await db.execute(select(Machine).order_by(Machine.name))
+            machines = list(result.scalars().all())
+
+            if not machines:
+                return {
+                    "response_type": "machine_list",
+                    "response_data": {"machines": []},
+                    "messages": [AIMessage(content="No machines configured in the system.")]
+                }
+
+            lines = ["**Machine List:**\n"]
+            for m in machines:
+                status_icon = "🟢" if m.status == "operational" else "🔴"
+                lines.append(f"{status_icon} **{m.name}** ({m.machine_type}) - ${m.hourly_rate:.2f}/hr")
+
+            lines.append(f"\n_Total: {len(machines)} machine(s)_")
+
+            return {
+                "response_type": "machine_list",
+                "response_data": {
+                    "machines": [
+                        {"id": m.id, "name": m.name, "type": m.machine_type, "rate": m.hourly_rate, "status": m.status}
+                        for m in machines
+                    ]
+                },
+                "messages": [AIMessage(content="\n".join(lines))]
+            }
+
+    async def _add_machine_node(self, state: AgentState) -> dict:
+        """Add a new machine."""
+        machine_name = state.get("machine_name")
+        machine_type = state.get("machine_type")
+        hourly_rate = state.get("hourly_rate")
+
+        if not machine_name or not machine_type:
+            return {
+                "response_type": "clarification",
+                "messages": [AIMessage(
+                    content="To add a machine, I need the name and type.\n\n"
+                           "Example: 'Add machine CNC-Mill-3, type cnc, $80/hour'"
+                )]
+            }
+
+        async with get_db_context() as db:
+            from models import Machine
+
+            machine = Machine(
+                name=machine_name,
+                machine_type=machine_type,
+                hourly_rate=float(hourly_rate or 75.0),
+                status="operational"
+            )
+            db.add(machine)
+            await db.commit()
+            await db.refresh(machine)
+
+            return {
+                "response_type": "confirmation",
+                "response_data": {
+                    "machine_id": machine.id,
+                    "name": machine.name,
+                    "type": machine.machine_type,
+                    "rate": machine.hourly_rate
+                },
+                "messages": [AIMessage(
+                    content=f"**Machine Added!**\n\n"
+                           f"- **Name:** {machine.name}\n"
+                           f"- **Type:** {machine.machine_type}\n"
+                           f"- **Rate:** ${machine.hourly_rate:.2f}/hr\n"
+                           f"- **Status:** {machine.status}"
+                )]
+            }
+
+    async def _update_job_node(self, state: AgentState) -> dict:
+        """Update job details (priority, dates, etc.)."""
+        job_number = state.get("job_number")
+        new_priority = state.get("new_priority")
+        new_delivery_date = state.get("new_delivery_date")
+
+        if not job_number:
+            return {
+                "response_type": "clarification",
+                "messages": [AIMessage(
+                    content="Which job would you like to update? Please provide the job number.\n\n"
+                           "Example: 'Update job 20251231-0001 priority to 1'"
+                )]
+            }
+
+        async with get_db_context() as db:
+            job_service = JobService(db)
+            job = await job_service.get_job_by_number(job_number)
+
+            if not job:
+                return {
+                    "response_type": "error",
+                    "messages": [AIMessage(content=f"Job **{job_number}** not found.")]
+                }
+
+            changes = []
+            if new_priority is not None:
+                old_priority = job.priority
+                job.priority = int(new_priority)
+                changes.append(f"Priority: {old_priority} → {new_priority}")
+
+            if new_delivery_date:
+                from datetime import datetime as dt
+                try:
+                    job.requested_delivery_date = dt.fromisoformat(new_delivery_date.replace('Z', '+00:00'))
+                    changes.append(f"Delivery date: {new_delivery_date}")
+                except ValueError:
+                    changes.append(f"Delivery date: Could not parse '{new_delivery_date}'")
+
+            if not changes:
+                return {
+                    "response_type": "clarification",
+                    "messages": [AIMessage(
+                        content="What would you like to update? You can change:\n"
+                               "- Priority (1-10, where 1 is highest)\n"
+                               "- Delivery date"
+                    )]
+                }
+
+            await db.commit()
+
+            return {
+                "response_type": "confirmation",
+                "response_data": {
+                    "job_number": job.job_number,
+                    "changes": changes
+                },
+                "messages": [AIMessage(
+                    content=f"**Job Updated!**\n\nJob **{job_number}** updated:\n- " + "\n- ".join(changes)
+                )]
+            }
+
+    async def _view_quote_node(self, state: AgentState) -> dict:
+        """View a specific quote."""
+        quote_number = state.get("quote_number")
+        job_number = state.get("job_number")
+
+        async with get_db_context() as db:
+            from sqlalchemy import select
+            from models import Quote
+
+            if quote_number:
+                result = await db.execute(
+                    select(Quote).where(Quote.quote_number == quote_number)
+                )
+            elif job_number:
+                result = await db.execute(
+                    select(Quote).where(Quote.quote_number.like(f"Q-{job_number}%"))
+                )
+            else:
+                return {
+                    "response_type": "clarification",
+                    "messages": [AIMessage(
+                        content="Please specify a quote or job number.\n\n"
+                               "Example: 'View quote Q-20251231-0001' or 'Show quote for job 20251231-0001'"
+                    )]
+                }
+
+            quote = result.scalar_one_or_none()
+            if not quote:
+                return {
+                    "response_type": "error",
+                    "messages": [AIMessage(content="Quote not found.")]
+                }
+
+            expired = quote.expires_at and datetime.utcnow() > quote.expires_at
+            status = "EXPIRED" if expired else ("ACCEPTED" if quote.is_accepted else "PENDING")
+
+            expires_str = quote.expires_at.strftime('%Y-%m-%d') if quote.expires_at else 'N/A'
+
+            details = f"""**Quote Details: {quote.quote_number}**
+
+- **Type:** {quote.quote_type.value}
+- **Total Price:** ${quote.total_price:,.2f}
+- **Status:** {status}
+- **Material Cost:** ${quote.material_cost:,.2f}
+- **Labor Cost:** ${quote.labor_cost:,.2f}
+- **Overhead Cost:** ${quote.overhead_cost:,.2f}
+- **Margin:** {quote.margin_percentage * 100:.0f}%
+- **Lead Time:** {quote.lead_time_days or 'N/A'} days
+- **Expires:** {expires_str}"""
+
+            return {
+                "response_type": "quote_details",
+                "response_data": {
+                    "quote_number": quote.quote_number,
+                    "total": quote.total_price,
+                    "status": status,
+                    "type": quote.quote_type.value
+                },
+                "messages": [AIMessage(content=details)]
+            }
+
+    async def _list_quotes_node(self, state: AgentState) -> dict:
+        """List all quotes."""
+        async with get_db_context() as db:
+            from sqlalchemy import select
+            from models import Quote
+
+            result = await db.execute(
+                select(Quote).order_by(Quote.created_at.desc()).limit(20)
+            )
+            quotes = list(result.scalars().all())
+
+            if not quotes:
+                return {
+                    "response_type": "quote_list",
+                    "response_data": {"quotes": []},
+                    "messages": [AIMessage(content="No quotes found in the system.")]
+                }
+
+            lines = ["**Recent Quotes:**\n"]
+            for q in quotes:
+                expired = q.expires_at and datetime.utcnow() > q.expires_at
+                status = "Expired" if expired else ("Accepted" if q.is_accepted else "Pending")
+                status_icon = "🔴" if expired else ("🟢" if q.is_accepted else "🟡")
+                lines.append(
+                    f"{status_icon} **{q.quote_number}** - ${q.total_price:,.2f} ({q.quote_type.value}) - {status}"
+                )
+
+            lines.append(f"\n_Showing {len(quotes)} most recent quote(s)_")
+
+            return {
+                "response_type": "quote_list",
+                "response_data": {
+                    "quotes": [
+                        {"number": q.quote_number, "price": q.total_price, "type": q.quote_type.value, "accepted": q.is_accepted}
+                        for q in quotes
+                    ]
+                },
+                "messages": [AIMessage(content="\n".join(lines))]
+            }
+
+    async def _reorder_item_node(self, state: AgentState) -> dict:
+        """Trigger reorder/restock for an item."""
+        item_name = state.get("item_name")
+        reorder_quantity = state.get("reorder_quantity")
+
+        if not item_name:
+            return {
+                "response_type": "clarification",
+                "messages": [AIMessage(
+                    content="Which item would you like to reorder?\n\n"
+                           "Example: 'Reorder aluminum' or 'Restock steel bars, 100 units'"
+                )]
+            }
+
+        async with get_db_context() as db:
+            from sqlalchemy import select
+
+            result = await db.execute(
+                select(Item).where(
+                    (Item.name.ilike(f"%{item_name}%")) |
+                    (Item.sku.ilike(f"%{item_name}%"))
+                )
+            )
+            item = result.scalar_one_or_none()
+
+            if not item:
+                return {
+                    "response_type": "error",
+                    "messages": [AIMessage(content=f"Item '{item_name}' not found in inventory.")]
+                }
+
+            # Default quantity is 2x reorder point
+            qty = reorder_quantity or (item.reorder_point * 2)
+
+            return {
+                "response_type": "confirmation",
+                "response_data": {
+                    "item_id": item.id,
+                    "item_name": item.name,
+                    "sku": item.sku,
+                    "quantity": qty,
+                    "vendor": item.vendor_name,
+                    "lead_time_days": item.vendor_lead_time_days
+                },
+                "messages": [AIMessage(
+                    content=f"**Reorder Initiated!**\n\n"
+                           f"- **Item:** {item.name} ({item.sku})\n"
+                           f"- **Quantity:** {qty} units\n"
+                           f"- **Vendor:** {item.vendor_name or 'Not specified'}\n"
+                           f"- **Lead Time:** {item.vendor_lead_time_days} days\n"
+                           f"- **Est. Cost:** ${qty * item.cost_per_unit:,.2f}\n\n"
+                           f"_Note: Full PO generation is coming in a future update._"
+                )]
+            }
+
     async def _adjust_inventory_node(self, state: AgentState) -> dict:
         """Adjust inventory quantity."""
         item_name = state.get("item_name")
@@ -1374,6 +2034,7 @@ How can I help you today?"""
             "job_id": None,
             "job_number": None,
             "customer_name": None,
+            "customer_email": None,
             "product_description": None,
             "requested_date": None,
             "quantity": None,
@@ -1386,10 +2047,19 @@ How can I help you today?"""
             "search_query": None,
             "adjustment_quantity": None,
             "item_name": None,
+            "item_sku": None,
+            "item_cost": None,
+            "item_category": None,
             "inventory_data": None,
             "schedule_data": None,
             "cost_data": None,
             "quote_options": None,
+            "quote_number": None,
+            "reorder_quantity": None,
+            "machine_name": None,
+            "hourly_rate": None,
+            "new_priority": None,
+            "new_delivery_date": None,
             "response_type": None,
             "response_data": None,
             "error": None

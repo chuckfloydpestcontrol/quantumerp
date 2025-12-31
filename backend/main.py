@@ -20,6 +20,7 @@ from database import close_db, get_db, init_db
 from hub import get_hub
 from models import (
     ChatMessage,
+    Customer,
     Item,
     Job,
     JobStatus,
@@ -31,6 +32,9 @@ from models import (
 from schemas import (
     ChatMessageInput,
     ChatMessageResponse,
+    CustomerCreate,
+    CustomerResponse,
+    CustomerUpdate,
     GenerativeUIResponse,
     ItemCreate,
     ItemResponse,
@@ -44,7 +48,7 @@ from schemas import (
     QuoteResponse,
     UIResponseType,
 )
-from services import CostingService, InventoryService, JobService, SchedulingService
+from services import CostingService, CustomerService, InventoryService, JobService, SchedulingService
 
 settings = get_settings()
 
@@ -509,6 +513,96 @@ async def list_quotes(db: AsyncSession = Depends(get_db)):
 
 
 # ============================================================================
+# Customer Endpoints
+# ============================================================================
+
+@app.post("/api/customers", response_model=CustomerResponse)
+async def create_customer(
+    customer_data: CustomerCreate,
+    db: AsyncSession = Depends(get_db)
+):
+    """Create a new customer."""
+    customer_service = CustomerService(db)
+    customer = await customer_service.create_customer(
+        name=customer_data.name,
+        email=customer_data.email,
+        phone=customer_data.phone,
+        address=customer_data.address,
+        billing_address=customer_data.billing_address,
+        active=customer_data.active,
+        notes=customer_data.notes,
+        credit_limit=customer_data.credit_limit,
+        payment_terms_days=customer_data.payment_terms_days
+    )
+    await db.commit()
+    return customer
+
+
+@app.get("/api/customers", response_model=list[CustomerResponse])
+async def list_customers(
+    active_only: bool = True,
+    db: AsyncSession = Depends(get_db)
+):
+    """List all customers."""
+    customer_service = CustomerService(db)
+    customers = await customer_service.list_customers(active_only=active_only)
+    return customers
+
+
+@app.get("/api/customers/search", response_model=list[CustomerResponse])
+async def search_customers(
+    query: str,
+    db: AsyncSession = Depends(get_db)
+):
+    """Search customers by name or email."""
+    customer_service = CustomerService(db)
+    customers = await customer_service.search_customers(query)
+    return customers
+
+
+@app.get("/api/customers/{customer_id}", response_model=CustomerResponse)
+async def get_customer(customer_id: int, db: AsyncSession = Depends(get_db)):
+    """Get a specific customer by ID."""
+    customer_service = CustomerService(db)
+    customer = await customer_service.get_customer(customer_id)
+    if not customer:
+        raise HTTPException(status_code=404, detail="Customer not found")
+    return customer
+
+
+@app.patch("/api/customers/{customer_id}", response_model=CustomerResponse)
+async def update_customer(
+    customer_id: int,
+    update_data: CustomerUpdate,
+    db: AsyncSession = Depends(get_db)
+):
+    """Update a customer."""
+    customer_service = CustomerService(db)
+    customer = await customer_service.update_customer(
+        customer_id,
+        **update_data.model_dump(exclude_unset=True)
+    )
+    if not customer:
+        raise HTTPException(status_code=404, detail="Customer not found")
+    await db.commit()
+    return customer
+
+
+@app.delete("/api/customers/{customer_id}")
+async def deactivate_customer(
+    customer_id: int,
+    db: AsyncSession = Depends(get_db)
+):
+    """Soft-delete a customer by setting active=False."""
+    customer_service = CustomerService(db)
+    customer = await customer_service.deactivate_customer(customer_id)
+    if not customer:
+        raise HTTPException(status_code=404, detail="Customer not found")
+    await db.commit()
+    return {"message": f"Customer {customer.name} has been deactivated", "customer_id": customer.id}
+
+
+# ============================================================================
 # WebSocket for Real-time Updates
 # ============================================================================
 
@@ -596,9 +690,30 @@ async def seed_data(db: AsyncSession = Depends(get_db)):
         item = Item(**i)
         db.add(item)
 
+    # Seed customers
+    customers_data = [
+        {"name": "Acme Manufacturing", "email": "orders@acmemfg.com", "phone": "555-100-1000",
+         "address": "123 Industrial Blvd, Detroit, MI 48201", "payment_terms_days": 30},
+        {"name": "Precision Parts Inc", "email": "purchasing@precisionparts.com", "phone": "555-200-2000",
+         "address": "456 Tech Park Dr, Austin, TX 78701", "credit_limit": 50000.00, "payment_terms_days": 45},
+        {"name": "Aerospace Dynamics", "email": "procurement@aerodyn.com", "phone": "555-300-3000",
+         "address": "789 Aviation Way, Seattle, WA 98101", "credit_limit": 100000.00, "payment_terms_days": 60},
+        {"name": "AutoMotive Solutions", "email": "supply@automotivesol.com", "phone": "555-400-4000",
+         "address": "321 Motor Lane, Dearborn, MI 48124", "payment_terms_days": 30},
+    ]
+
+    for c in customers_data:
+        customer = Customer(**c)
+        db.add(customer)
+
     await db.commit()
 
-    return {"message": "Database seeded with demo data", "machines": len(machines_data), "items": len(items_data)}
+    return {
+        "message": "Database seeded with demo data",
+        "machines": len(machines_data),
+        "items": len(items_data),
+        "customers": len(customers_data)
+    }
 
 
 if __name__ == "__main__":

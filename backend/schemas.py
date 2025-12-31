@@ -63,6 +63,7 @@ class ItemBase(BaseSchema):
     vendor_lead_time_days: int = Field(default=7, ge=0)
     vendor_name: Optional[str] = None
     category: Optional[str] = None
+    uom: str = Field(default="each", max_length=20)  # Unit of Measure
     specifications: Optional[dict[str, Any]] = None
 
 
@@ -79,10 +80,49 @@ class ItemUpdate(BaseSchema):
     vendor_lead_time_days: Optional[int] = Field(None, ge=0)
     vendor_name: Optional[str] = None
     category: Optional[str] = None
+    uom: Optional[str] = Field(None, max_length=20)
     specifications: Optional[dict[str, Any]] = None
 
 
 class ItemResponse(ItemBase):
+    id: int
+    created_at: datetime
+    updated_at: datetime
+
+
+# ============================================================================
+# Customer Schemas
+# ============================================================================
+
+class CustomerBase(BaseSchema):
+    name: str = Field(..., min_length=1, max_length=255)
+    email: Optional[str] = Field(None, max_length=255)
+    phone: Optional[str] = Field(None, max_length=50)
+    address: Optional[str] = None
+    billing_address: Optional[str] = None
+    active: bool = True
+    notes: Optional[str] = None
+    credit_limit: Optional[float] = Field(None, ge=0)
+    payment_terms_days: int = Field(default=30, ge=0)
+
+
+class CustomerCreate(CustomerBase):
+    pass
+
+
+class CustomerUpdate(BaseSchema):
+    name: Optional[str] = Field(None, min_length=1, max_length=255)
+    email: Optional[str] = Field(None, max_length=255)
+    phone: Optional[str] = Field(None, max_length=50)
+    address: Optional[str] = None
+    billing_address: Optional[str] = None
+    active: Optional[bool] = None
+    notes: Optional[str] = None
+    credit_limit: Optional[float] = Field(None, ge=0)
+    payment_terms_days: Optional[int] = Field(None, ge=0)
+
+
+class CustomerResponse(CustomerBase):
     id: int
     created_at: datetime
     updated_at: datetime

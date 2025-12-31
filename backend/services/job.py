@@ -1,7 +1,7 @@
 """Job Spoke Service - manages job lifecycle and orchestration."""
 
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional
 
 from sqlalchemy import select, func
@@ -166,7 +166,8 @@ class JobService:
             margin_percentage=margin_percentage,
             estimated_delivery_date=estimated_delivery_date,
             lead_time_days=lead_time_days,
-            analysis_data=analysis_data
+            analysis_data=analysis_data,
+            expires_at=datetime.utcnow() + timedelta(days=30)
         )
 
         self.db.add(quote)
@@ -194,6 +195,15 @@ class JobService:
             select(Quote).where(Quote.id == job.quote_id)
         )
         quote = result.scalar_one()
+
+        # Check if quote has expired
+        if quote.expires_at:
+            now = datetime.utcnow()
+            # Handle timezone-aware datetimes
+            expires_at = quote.expires_at.replace(tzinfo=None) if quote.expires_at.tzinfo else quote.expires_at
+            if now > expires_at:
+                raise ValueError(f"Quote has expired on {expires_at.strftime('%Y-%m-%d')}. Please request a new quote.")
+
         quote.is_accepted = True
         quote.accepted_at = datetime.utcnow()
 

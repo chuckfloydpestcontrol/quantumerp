@@ -5,6 +5,7 @@ from services.scheduling import SchedulingService
 from services.costing import CostingService
 from services.job import JobService
 from services.conversation import ConversationService
+from services.customer import CustomerService
 
 __all__ = [
     "InventoryService",
@@ -12,4 +13,5 @@ __all__ = [
     "CostingService",
     "JobService",
     "ConversationService",
+    "CustomerService",
 ]

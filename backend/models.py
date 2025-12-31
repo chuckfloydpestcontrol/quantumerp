@@ -79,6 +79,7 @@ class Item(Base):
     vendor_lead_time_days: Mapped[int] = mapped_column(Integer, default=7)
     vendor_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     category: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    uom: Mapped[str] = mapped_column(String(20), default="each")  # Unit of Measure
     specifications: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
 
     # Vector embedding for semantic search
@@ -93,6 +94,37 @@ class Item(Base):
 
     # Relationships
     bom_items: Mapped[list["BOMItem"]] = relationship(back_populates="item")
+
+
+# ============================================================================
+# Customer Module Models
+# ============================================================================
+
+class Customer(Base):
+    """Customer entity for managing customer relationships."""
+    __tablename__ = "customers"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    phone: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    address: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    billing_address: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    credit_limit: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    payment_terms_days: Mapped[int] = mapped_column(Integer, default=30)
+    extra_data: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    # Relationships
+    jobs: Mapped[list["Job"]] = relationship(back_populates="customer")
 
 
 # ============================================================================
@@ -160,8 +192,15 @@ class Job(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     job_number: Mapped[str] = mapped_column(String(50), unique=True, nullable=False)
+
+    # Customer reference (nullable for backward compatibility)
+    customer_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("customers.id"), nullable=True
+    )
+    # Legacy fields kept for backward compatibility
     customer_name: Mapped[str] = mapped_column(String(255), nullable=False)
     customer_email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     # Status tracking
@@ -202,6 +241,7 @@ class Job(Base):
     )
 
     # Relationships
+    customer: Mapped[Optional["Customer"]] = relationship(back_populates="jobs")
     quote: Mapped[Optional["Quote"]] = relationship(foreign_keys=[quote_id])
     production_slots: Mapped[list["ProductionSlot"]] = relationship(back_populates="job")
     bom_items: Mapped[list["BOMItem"]] = relationship(back_populates="job")
