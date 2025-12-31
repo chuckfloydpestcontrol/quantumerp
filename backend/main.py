@@ -67,11 +67,69 @@ async def lifespan(app: FastAPI):
     await close_db()
 
 
+# ============================================================================
+# OpenAPI Tags Metadata
+# ============================================================================
+
+tags_metadata = [
+    {
+        "name": "Chat",
+        "description": "AI-powered chat interface - the primary way to interact with Quantum HUB. Natural language commands are interpreted and routed to appropriate workflows.",
+    },
+    {
+        "name": "Jobs",
+        "description": "Job lifecycle management. Jobs track manufacturing orders from quote to completion. Supports Dynamic Entry (schedule-first) workflow.",
+    },
+    {
+        "name": "Inventory",
+        "description": "Stock and materials management. Track quantities, reorder points, and vendor lead times.",
+    },
+    {
+        "name": "Scheduling",
+        "description": "Machine and production slot management. Find available capacity and schedule production.",
+    },
+    {
+        "name": "Quoting",
+        "description": "Cost estimation and pricing. Generate parallel quote options (Fastest, Cheapest, Balanced) using Fan-Out/Fan-In pattern.",
+    },
+    {
+        "name": "Customers",
+        "description": "Customer relationship management. Track customer details, payment terms, and credit limits.",
+    },
+    {
+        "name": "System",
+        "description": "Health checks, status monitoring, and development utilities.",
+    },
+]
+
 app = FastAPI(
     title="Quantum HUB ERP",
-    description="AI-native Hub-and-Spoke ERP for Manufacturing",
+    description="""
+## AI-Native Hub-and-Spoke ERP for Manufacturing
+
+Quantum HUB replaces linear workflows with parallel, agentic orchestration.
+
+### Key Features
+- **Parallel Quoting**: Fan-Out/Fan-In pattern generates Fastest, Cheapest, and Balanced options simultaneously
+- **Dynamic Entry**: Schedule-first workflow allows production to proceed without a PO
+- **Natural Language Interface**: Chat with the system using plain English
+
+### Getting Started
+1. Use the `/api/chat` endpoint to interact naturally
+2. Or use individual REST endpoints for programmatic access
+3. Visit `/api/seed` (POST) to populate demo data
+
+### Quick Examples
+- "I need a quote for 50 aluminum brackets"
+- "list jobs"
+- "show inventory"
+- "add customer Acme Corp"
+    """,
     version="1.0.0",
     lifespan=lifespan,
+    openapi_tags=tags_metadata,
+    docs_url="/docs",
+    redoc_url="/redoc",
 )
 
 # CORS configuration
