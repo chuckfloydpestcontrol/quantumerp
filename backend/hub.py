@@ -148,6 +148,7 @@ You support these workflows:
 - FINANCIAL_HOLD_REPORT: Show jobs awaiting PO
 
 - GENERAL_QUERY: General questions about the system
+- HELP: User wants help or wants to know what commands are available (e.g., "help", "what can you do?", "commands")
 
 Extract these details when applicable:
 - customer_name: Who is the customer
@@ -175,7 +176,7 @@ Extract these details when applicable:
 
 Respond with a JSON object:
 {{
-    "intent": "QUOTE_REQUEST|ACCEPT_QUOTE|CREATE_JOB|SCHEDULE_REQUEST|JOB_STATUS|GET_JOB_DETAILS|SEARCH_JOBS|UPDATE_JOB|START_JOB|COMPLETE_JOB|CANCEL_JOB|ATTACH_PO|LIST_INVENTORY|INVENTORY_QUERY|LOW_STOCK_ALERT|ADJUST_INVENTORY|ADD_ITEM|REORDER_ITEM|ADD_CUSTOMER|LIST_CUSTOMERS|VIEW_QUOTE|LIST_QUOTES|SCHEDULE_VIEW|LIST_MACHINES|ADD_MACHINE|MACHINE_UTILIZATION|FINANCIAL_HOLD_REPORT|GENERAL_QUERY",
+    "intent": "QUOTE_REQUEST|ACCEPT_QUOTE|CREATE_JOB|SCHEDULE_REQUEST|JOB_STATUS|GET_JOB_DETAILS|SEARCH_JOBS|UPDATE_JOB|START_JOB|COMPLETE_JOB|CANCEL_JOB|ATTACH_PO|LIST_INVENTORY|INVENTORY_QUERY|LOW_STOCK_ALERT|ADJUST_INVENTORY|ADD_ITEM|REORDER_ITEM|ADD_CUSTOMER|LIST_CUSTOMERS|VIEW_QUOTE|LIST_QUOTES|SCHEDULE_VIEW|LIST_MACHINES|ADD_MACHINE|MACHINE_UTILIZATION|FINANCIAL_HOLD_REPORT|GENERAL_QUERY|HELP",
     "customer_name": "extracted or null",
     "customer_email": "email or null",
     "product_description": "what to manufacture or null",
@@ -297,6 +298,9 @@ class QuantumHub:
         workflow.add_node("machine_utilization", self._machine_utilization_node)
         workflow.add_node("financial_hold_report", self._financial_hold_report_node)
 
+        # Add node - Help
+        workflow.add_node("help", self._help_node)
+
         # Set entry point
         workflow.set_entry_point("supervisor")
 
@@ -334,6 +338,7 @@ class QuantumHub:
                 "add_machine": "add_machine",
                 "machine_utilization": "machine_utilization",
                 "financial_hold_report": "financial_hold_report",
+                "help": "help",
                 # Default
                 "direct_response": "direct_response",
                 "end": END,
@@ -372,6 +377,7 @@ class QuantumHub:
         workflow.add_edge("add_machine", END)
         workflow.add_edge("machine_utilization", END)
         workflow.add_edge("financial_hold_report", END)
+        workflow.add_edge("help", END)
         workflow.add_edge("direct_response", END)
 
         return workflow.compile()
@@ -443,6 +449,10 @@ class QuantumHub:
             return "machine_utilization"
         elif intent == "FINANCIAL_HOLD_REPORT":
             return "financial_hold_report"
+
+        # Help
+        elif intent == "HELP":
+            return "help"
 
         # Error or default
         elif state.get("error"):
@@ -1955,6 +1965,45 @@ Please synthesize these into a clear response for the customer.
                 "response_data": {"jobs": [{"job_number": j.job_number, "customer": j.customer_name, "days": calc_days(j)} for j in jobs]},
                 "messages": [AIMessage(content="\n".join(lines))]
             }
+
+    async def _help_node(self, state: AgentState) -> dict:
+        """Help Node - Shows available commands and examples."""
+        help_text = """**Quantum HUB Quick Help**
+
+**Quoting:**
+- "I need a quote for 10 aluminum brackets"
+- "list quotes" / "view quote Q-20251231-0001"
+- "accept the balanced option"
+
+**Jobs:**
+- "create job for Acme Corp - 50 steel brackets"
+- "list jobs" / "show job J-20251231-0001"
+- "update job priority to 8"
+- "attach PO-12345 to job"
+
+**Inventory:**
+- "show inventory" / "check stock for aluminum"
+- "what's running low?"
+- "reorder titanium" / "add 50 units of steel"
+
+**Customers:**
+- "list customers" / "add customer Widget Inc"
+
+**Machines & Scheduling:**
+- "list machines" / "add machine Laser-2 at $150/hr"
+- "show schedule" / "find slot for 4 hours on CNC"
+
+**Reports:**
+- "show jobs on financial hold"
+- "machine utilization"
+
+Type naturally - I'll understand what you need!"""
+
+        return {
+            "messages": [AIMessage(content=help_text)],
+            "response_type": "help",
+            "response_data": {"topic": "general_help"}
+        }
 
     async def _direct_response_node(self, state: AgentState) -> dict:
         """Direct Response Node - Handles general queries and errors."""
