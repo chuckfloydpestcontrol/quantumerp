@@ -49,6 +49,7 @@ from schemas import (
     UIResponseType,
 )
 from services import CostingService, CustomerService, InventoryService, JobService, SchedulingService
+from routers.estimates import router as estimates_router
 
 settings = get_settings()
 
@@ -79,6 +80,10 @@ tags_metadata = [
     {
         "name": "Jobs",
         "description": "Job lifecycle management. Jobs track manufacturing orders from quote to completion. Supports Dynamic Entry (schedule-first) workflow.",
+    },
+    {
+        "name": "Estimates",
+        "description": "Customer-facing estimate management. Create, version, and manage estimates with full lifecycle support: draft, approval, send, accept/reject.",
     },
     {
         "name": "Inventory",
@@ -140,6 +145,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Include routers
+app.include_router(estimates_router)
 
 
 # ============================================================================
