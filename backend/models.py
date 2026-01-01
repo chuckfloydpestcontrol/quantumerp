@@ -1,7 +1,7 @@
 """SQLAlchemy 2.0 declarative models for Quantum HUB ERP."""
 
 import enum
-from datetime import datetime
+from datetime import date, datetime
 from typing import Optional
 from uuid import uuid4
 
@@ -9,6 +9,7 @@ from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     JSON,
     Boolean,
+    Date,
     DateTime,
     Enum,
     Float,
@@ -59,6 +60,24 @@ class MessageRole(str, enum.Enum):
     USER = "user"
     ASSISTANT = "assistant"
     SYSTEM = "system"
+
+
+class EstimateStatus(str, enum.Enum):
+    """Estimate lifecycle status."""
+    DRAFT = "draft"
+    PENDING_APPROVAL = "pending_approval"
+    APPROVED = "approved"
+    SENT = "sent"
+    ACCEPTED = "accepted"
+    REJECTED = "rejected"
+    EXPIRED = "expired"
+
+
+class ATPStatus(str, enum.Enum):
+    """Available to Promise status."""
+    AVAILABLE = "available"
+    PARTIAL = "partial"
+    BACKORDER = "backorder"
 
 
 # ============================================================================
@@ -125,6 +144,7 @@ class Customer(Base):
 
     # Relationships
     jobs: Mapped[list["Job"]] = relationship(back_populates="customer")
+    estimates: Mapped[list["Estimate"]] = relationship(back_populates="customer")
 
 
 # ============================================================================
@@ -387,3 +407,183 @@ class Document(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
+
+
+# ============================================================================
+# Estimating Module Models
+# ============================================================================
+
+class PriceBook(Base):
+    """Price book for customer/tier-specific pricing."""
+    __tablename__ = "price_books"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String(100), nullable=False)
+    is_default: Mapped[bool] = mapped_column(Boolean, default=False)
+    customer_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("customers.id"), nullable=True
+    )
+    customer_segment: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    currency_code: Mapped[str] = mapped_column(String(3), default="USD")
+    valid_from: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
+    valid_until: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    # Relationships
+    customer: Mapped[Optional["Customer"]] = relationship()
+    entries: Mapped[list["PriceBookEntry"]] = relationship(back_populates="price_book", cascade="all, delete-orphan")
+
+
+class PriceBookEntry(Base):
+    """Individual price entry with optional volume tiers."""
+    __tablename__ = "price_book_entries"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    price_book_id: Mapped[int] = mapped_column(
+        ForeignKey("price_books.id", ondelete="CASCADE"), nullable=False
+    )
+    item_id: Mapped[int] = mapped_column(ForeignKey("items.id"), nullable=False)
+    min_qty: Mapped[float] = mapped_column(Float, default=1)
+    max_qty: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    unit_price: Mapped[float] = mapped_column(Float, nullable=False)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    # Relationships
+    price_book: Mapped["PriceBook"] = relationship(back_populates="entries")
+    item: Mapped["Item"] = relationship()
+
+
+class ApprovalRule(Base):
+    """Configurable approval rules for estimates."""
+    __tablename__ = "approval_rules"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String(100), nullable=False)
+    condition_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    # Types: margin_below, total_above, payment_terms_above, customer_new
+    threshold_value: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    approver_role: Mapped[str] = mapped_column(String(50), nullable=False)
+    priority: Mapped[int] = mapped_column(Integer, default=0)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
+class Estimate(Base):
+    """Estimate/Quote header with versioning support."""
+    __tablename__ = "estimates"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    estimate_number: Mapped[str] = mapped_column(String(50), nullable=False)
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    parent_estimate_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("estimates.id"), nullable=True
+    )
+    superseded_by_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("estimates.id"), nullable=True
+    )
+
+    customer_id: Mapped[int] = mapped_column(ForeignKey("customers.id"), nullable=False)
+    status: Mapped[EstimateStatus] = mapped_column(
+        Enum(EstimateStatus), default=EstimateStatus.DRAFT
+    )
+
+    currency_code: Mapped[str] = mapped_column(String(3), default="USD")
+    exchange_rate: Mapped[float] = mapped_column(Float, default=1.0)
+    price_book_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("price_books.id"), nullable=True
+    )
+
+    valid_until: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
+    subtotal: Mapped[float] = mapped_column(Float, default=0)
+    tax_amount: Mapped[float] = mapped_column(Float, default=0)
+    total_amount: Mapped[float] = mapped_column(Float, default=0)
+    margin_percent: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+
+    requested_delivery_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
+    earliest_delivery_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
+    delivery_feasible: Mapped[bool] = mapped_column(Boolean, default=True)
+
+    pending_approvers: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+    approved_by: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    approved_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    rejection_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    sent_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    accepted_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    extra_data: Mapped[Optional[dict]] = mapped_column("metadata", JSONB, nullable=True)
+    created_by: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    # Relationships
+    customer: Mapped["Customer"] = relationship(back_populates="estimates")
+    price_book: Mapped[Optional["PriceBook"]] = relationship()
+    line_items: Mapped[list["EstimateLineItem"]] = relationship(
+        back_populates="estimate", cascade="all, delete-orphan", order_by="EstimateLineItem.sort_order"
+    )
+    parent_estimate: Mapped[Optional["Estimate"]] = relationship(
+        remote_side=[id], foreign_keys=[parent_estimate_id]
+    )
+
+
+class EstimateLineItem(Base):
+    """Individual line item on an estimate."""
+    __tablename__ = "estimate_line_items"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    estimate_id: Mapped[int] = mapped_column(
+        ForeignKey("estimates.id", ondelete="CASCADE"), nullable=False
+    )
+    item_id: Mapped[Optional[int]] = mapped_column(ForeignKey("items.id"), nullable=True)
+    description: Mapped[str] = mapped_column(Text, nullable=False)
+
+    quantity: Mapped[float] = mapped_column(Float, nullable=False)
+    unit_price: Mapped[float] = mapped_column(Float, nullable=False)
+    list_price: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    unit_cost: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    discount_pct: Mapped[float] = mapped_column(Float, default=0)
+    line_total: Mapped[float] = mapped_column(Float, nullable=False)
+    tax_amount: Mapped[float] = mapped_column(Float, default=0)
+
+    atp_status: Mapped[ATPStatus] = mapped_column(
+        Enum(ATPStatus), default=ATPStatus.AVAILABLE
+    )
+    atp_available_qty: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    atp_shortage_qty: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    atp_lead_time_days: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+
+    sort_order: Mapped[int] = mapped_column(Integer, default=0)
+    notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    # Relationships
+    estimate: Mapped["Estimate"] = relationship(back_populates="line_items")
+    item: Mapped[Optional["Item"]] = relationship()
