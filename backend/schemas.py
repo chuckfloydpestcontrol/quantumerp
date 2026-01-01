@@ -1,6 +1,6 @@
 """Pydantic V2 schemas for API validation."""
 
-from datetime import datetime
+from datetime import date, datetime
 from enum import Enum
 from typing import Any, Optional
 
@@ -38,6 +38,22 @@ class MessageRole(str, Enum):
     USER = "user"
     ASSISTANT = "assistant"
     SYSTEM = "system"
+
+
+class EstimateStatus(str, Enum):
+    DRAFT = "draft"
+    PENDING_APPROVAL = "pending_approval"
+    APPROVED = "approved"
+    SENT = "sent"
+    ACCEPTED = "accepted"
+    REJECTED = "rejected"
+    EXPIRED = "expired"
+
+
+class ATPStatus(str, Enum):
+    AVAILABLE = "available"
+    PARTIAL = "partial"
+    BACKORDER = "backorder"
 
 
 # ============================================================================
@@ -321,6 +337,12 @@ class UIResponseType(str, Enum):
     CHART = "chart"
     CONFIRMATION = "confirmation"
     ERROR = "error"
+    # New for estimating
+    ESTIMATE_CARD = "estimate_card"
+    ESTIMATE_LIST = "estimate_list"
+    APPROVAL_REQUEST = "approval_request"
+    PRODUCT_DISAMBIGUATION = "product_disambiguation"
+    ATP_WARNING = "atp_warning"
 
 
 class GenerativeUIResponse(BaseSchema):
@@ -365,3 +387,206 @@ class CostCalculation(BaseSchema):
     margin_amount: float
     total_price: float
     breakdown: dict[str, Any]
+
+
+# ============================================================================
+# Price Book Schemas
+# ============================================================================
+
+class PriceBookEntryBase(BaseSchema):
+    item_id: int
+    min_qty: float = 1
+    max_qty: Optional[float] = None
+    unit_price: float = Field(..., gt=0)
+
+
+class PriceBookEntryCreate(PriceBookEntryBase):
+    pass
+
+
+class PriceBookEntryResponse(PriceBookEntryBase):
+    id: int
+    price_book_id: int
+    created_at: datetime
+
+
+class PriceBookBase(BaseSchema):
+    name: str = Field(..., min_length=1, max_length=100)
+    is_default: bool = False
+    customer_id: Optional[int] = None
+    customer_segment: Optional[str] = None
+    currency_code: str = "USD"
+    valid_from: Optional[date] = None
+    valid_until: Optional[date] = None
+    active: bool = True
+
+
+class PriceBookCreate(PriceBookBase):
+    entries: Optional[list[PriceBookEntryCreate]] = None
+
+
+class PriceBookResponse(PriceBookBase):
+    id: int
+    created_at: datetime
+    updated_at: datetime
+    entries: list[PriceBookEntryResponse] = []
+
+
+# ============================================================================
+# Approval Rule Schemas
+# ============================================================================
+
+class ApprovalRuleBase(BaseSchema):
+    name: str = Field(..., min_length=1, max_length=100)
+    condition_type: str  # margin_below, total_above, payment_terms_above
+    threshold_value: Optional[float] = None
+    approver_role: str
+    priority: int = 0
+    active: bool = True
+
+
+class ApprovalRuleCreate(ApprovalRuleBase):
+    pass
+
+
+class ApprovalRuleResponse(ApprovalRuleBase):
+    id: int
+    created_at: datetime
+
+
+# ============================================================================
+# Estimate Line Item Schemas
+# ============================================================================
+
+class EstimateLineItemBase(BaseSchema):
+    item_id: Optional[int] = None
+    description: str = Field(..., min_length=1)
+    quantity: float = Field(..., gt=0)
+    unit_price: float = Field(..., ge=0)
+    discount_pct: float = Field(default=0, ge=0, le=1)
+    notes: Optional[str] = None
+
+
+class EstimateLineItemCreate(EstimateLineItemBase):
+    pass
+
+
+class EstimateLineItemUpdate(BaseSchema):
+    description: Optional[str] = None
+    quantity: Optional[float] = Field(None, gt=0)
+    unit_price: Optional[float] = Field(None, ge=0)
+    discount_pct: Optional[float] = Field(None, ge=0, le=1)
+    notes: Optional[str] = None
+
+
+class EstimateLineItemResponse(EstimateLineItemBase):
+    id: int
+    estimate_id: int
+    list_price: Optional[float] = None
+    unit_cost: Optional[float] = None
+    line_total: float
+    tax_amount: float = 0
+    atp_status: ATPStatus = ATPStatus.AVAILABLE
+    atp_available_qty: Optional[float] = None
+    atp_shortage_qty: Optional[float] = None
+    atp_lead_time_days: Optional[int] = None
+    sort_order: int = 0
+    created_at: datetime
+
+
+# ============================================================================
+# Estimate Schemas
+# ============================================================================
+
+class EstimateBase(BaseSchema):
+    customer_id: int
+    valid_until: Optional[date] = None
+    requested_delivery_date: Optional[date] = None
+    notes: Optional[str] = None
+    currency_code: str = "USD"
+
+
+class EstimateCreate(EstimateBase):
+    line_items: Optional[list[EstimateLineItemCreate]] = None
+
+
+class EstimateGenerateRequest(BaseSchema):
+    """Request for NLP-driven estimate generation."""
+    prompt: str = Field(..., min_length=1, max_length=2000)
+    thread_id: Optional[str] = None
+
+
+class EstimateUpdate(BaseSchema):
+    valid_until: Optional[date] = None
+    requested_delivery_date: Optional[date] = None
+    notes: Optional[str] = None
+    price_book_id: Optional[int] = None
+
+
+class EstimateResponse(EstimateBase):
+    id: int
+    estimate_number: str
+    version: int
+    parent_estimate_id: Optional[int] = None
+    status: EstimateStatus
+    price_book_id: Optional[int] = None
+    subtotal: float
+    tax_amount: float
+    total_amount: float
+    margin_percent: Optional[float] = None
+    earliest_delivery_date: Optional[date] = None
+    delivery_feasible: bool = True
+    pending_approvers: Optional[list[str]] = None
+    approved_by: Optional[int] = None
+    approved_at: Optional[datetime] = None
+    rejection_reason: Optional[str] = None
+    sent_at: Optional[datetime] = None
+    accepted_at: Optional[datetime] = None
+    metadata: Optional[dict[str, Any]] = None
+    created_by: Optional[int] = None
+    created_at: datetime
+    updated_at: datetime
+    line_items: list[EstimateLineItemResponse] = []
+
+
+class EstimateListResponse(BaseSchema):
+    """Lightweight estimate for list views."""
+    id: int
+    estimate_number: str
+    version: int
+    customer_id: int
+    customer_name: Optional[str] = None
+    status: EstimateStatus
+    total_amount: float
+    valid_until: Optional[date] = None
+    created_at: datetime
+
+
+class EstimateActionRequest(BaseSchema):
+    """Request for estimate actions (approve, reject, send)."""
+    comment: Optional[str] = None
+
+
+class EstimateRejectRequest(BaseSchema):
+    """Request for rejecting an estimate."""
+    reason: str = Field(..., min_length=1)
+
+
+class EstimateVersionResponse(BaseSchema):
+    """Version history entry."""
+    version: int
+    status: EstimateStatus
+    created_at: datetime
+    changes: Optional[list[str]] = None
+    rejection_reason: Optional[str] = None
+
+
+class ATPWarning(BaseSchema):
+    """ATP warning for display."""
+    line_item_id: int
+    item_name: str
+    required_qty: float
+    available_qty: float
+    shortage_qty: float
+    lead_time_days: int
+    message: str
