@@ -2190,11 +2190,14 @@ Please synthesize these into a clear response for the customer.
             if estimate_id:
                 estimate = await estimate_service.get_estimate(estimate_id)
             else:
-                # Find by number
+                # Find by number (get latest version)
                 from sqlalchemy import select
                 from models import Estimate as EstimateModel
                 result = await db.execute(
-                    select(EstimateModel).where(EstimateModel.estimate_number == estimate_number)
+                    select(EstimateModel)
+                    .where(EstimateModel.estimate_number == estimate_number)
+                    .order_by(EstimateModel.version.desc())
+                    .limit(1)
                 )
                 est = result.scalar_one_or_none()
                 if est:
@@ -2280,8 +2283,12 @@ Please synthesize these into a clear response for the customer.
             from sqlalchemy import select
             from models import Estimate as EstimateModel
 
+            # Get latest version of estimate
             result = await db.execute(
-                select(EstimateModel).where(EstimateModel.estimate_number == estimate_number)
+                select(EstimateModel)
+                .where(EstimateModel.estimate_number == estimate_number)
+                .order_by(EstimateModel.version.desc())
+                .limit(1)
             )
             estimate = result.scalar_one_or_none()
 
@@ -2333,8 +2340,12 @@ Please synthesize these into a clear response for the customer.
             from sqlalchemy import select
             from models import Estimate as EstimateModel
 
+            # Get latest version of estimate
             result = await db.execute(
-                select(EstimateModel).where(EstimateModel.estimate_number == estimate_number)
+                select(EstimateModel)
+                .where(EstimateModel.estimate_number == estimate_number)
+                .order_by(EstimateModel.version.desc())
+                .limit(1)
             )
             estimate = result.scalar_one_or_none()
 
@@ -2386,8 +2397,12 @@ Please synthesize these into a clear response for the customer.
             from sqlalchemy import select
             from models import Estimate as EstimateModel
 
+            # Get latest version of estimate
             result = await db.execute(
-                select(EstimateModel).where(EstimateModel.estimate_number == estimate_number)
+                select(EstimateModel)
+                .where(EstimateModel.estimate_number == estimate_number)
+                .order_by(EstimateModel.version.desc())
+                .limit(1)
             )
             estimate = result.scalar_one_or_none()
 
@@ -2438,8 +2453,12 @@ Please synthesize these into a clear response for the customer.
             from sqlalchemy import select
             from models import Estimate as EstimateModel
 
+            # Get latest version of estimate
             result = await db.execute(
-                select(EstimateModel).where(EstimateModel.estimate_number == estimate_number)
+                select(EstimateModel)
+                .where(EstimateModel.estimate_number == estimate_number)
+                .order_by(EstimateModel.version.desc())
+                .limit(1)
             )
             estimate = result.scalar_one_or_none()
 
@@ -2489,8 +2508,12 @@ Please synthesize these into a clear response for the customer.
             from sqlalchemy import select
             from models import Estimate as EstimateModel
 
+            # Get latest version of estimate
             result = await db.execute(
-                select(EstimateModel).where(EstimateModel.estimate_number == estimate_number)
+                select(EstimateModel)
+                .where(EstimateModel.estimate_number == estimate_number)
+                .order_by(EstimateModel.version.desc())
+                .limit(1)
             )
             estimate = result.scalar_one_or_none()
 
