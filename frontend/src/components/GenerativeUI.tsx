@@ -75,9 +75,44 @@ function EstimateCardWrapper({
     }
   }, [estimate.id, refreshEstimate]);
 
-  const handleAction = useCallback((action: string) => {
-    onAction?.(action, { estimateId: estimate.id, estimateNumber: estimate.estimate_number });
-  }, [onAction, estimate.id, estimate.estimate_number]);
+  const handleAction = useCallback(async (action: string) => {
+    // Map action to API endpoint
+    const actionEndpoints: Record<string, string> = {
+      submit: 'submit',
+      approve: 'approve',
+      reject: 'reject',
+      send: 'send',
+      accept: 'accept',
+    };
+
+    const endpoint = actionEndpoints[action];
+    if (!endpoint) {
+      // Unknown action, pass to parent
+      onAction?.(action, { estimateId: estimate.id, estimateNumber: estimate.estimate_number });
+      return;
+    }
+
+    setIsLoading(true);
+    try {
+      const response = await fetch(`${API_BASE}/v1/estimates/${estimate.id}/actions/${endpoint}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+
+      if (response.ok) {
+        await refreshEstimate();
+      } else {
+        const error = await response.json();
+        alert(error.detail || 'Action failed');
+      }
+    } catch (error) {
+      console.error(`Failed to ${action} estimate:`, error);
+      alert(`Failed to ${action} estimate`);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [onAction, estimate.id, estimate.estimate_number, refreshEstimate]);
 
   return (
     <>
