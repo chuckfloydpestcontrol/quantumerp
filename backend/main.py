@@ -26,6 +26,8 @@ from models import (
     JobStatus,
     Machine,
     MessageRole,
+    PriceBook,
+    PriceBookEntry,
     Quote,
     QuoteType,
 )
@@ -745,18 +747,20 @@ async def seed_data(db: AsyncSession = Depends(get_db)):
         machine = Machine(**m)
         db.add(machine)
 
-    # Seed inventory items
+    # Seed inventory items (varying stock levels for ATP testing)
     items_data = [
         {"name": "Aluminum 6061 Sheet", "sku": "AL6061-SH-1", "cost_per_unit": 45.00,
-         "quantity_on_hand": 100, "vendor_lead_time_days": 5, "category": "raw_material"},
+         "quantity_on_hand": 100, "reorder_point": 20, "vendor_lead_time_days": 5, "category": "raw_material"},
         {"name": "Steel 1018 Bar", "sku": "ST1018-BR-1", "cost_per_unit": 32.00,
-         "quantity_on_hand": 75, "vendor_lead_time_days": 3, "category": "raw_material"},
+         "quantity_on_hand": 75, "reorder_point": 15, "vendor_lead_time_days": 3, "category": "raw_material"},
         {"name": "Titanium Grade 5", "sku": "TI-GR5-1", "cost_per_unit": 180.00,
-         "quantity_on_hand": 20, "vendor_lead_time_days": 14, "category": "raw_material"},
+         "quantity_on_hand": 5, "reorder_point": 10, "vendor_lead_time_days": 14, "category": "raw_material"},  # Low stock for ATP testing
         {"name": "Brass C360", "sku": "BR-C360-1", "cost_per_unit": 55.00,
-         "quantity_on_hand": 50, "vendor_lead_time_days": 7, "category": "raw_material"},
+         "quantity_on_hand": 50, "reorder_point": 10, "vendor_lead_time_days": 7, "category": "raw_material"},
         {"name": "M5 Socket Cap Screws (100)", "sku": "HW-M5SCS-100", "cost_per_unit": 12.00,
-         "quantity_on_hand": 500, "vendor_lead_time_days": 2, "category": "hardware"},
+         "quantity_on_hand": 500, "reorder_point": 100, "vendor_lead_time_days": 2, "category": "hardware"},
+        {"name": "Stainless 316L Rod", "sku": "SS316L-RD-1", "cost_per_unit": 95.00,
+         "quantity_on_hand": 0, "reorder_point": 5, "vendor_lead_time_days": 10, "category": "raw_material"},  # Out of stock for ATP testing
     ]
 
     for i in items_data:
@@ -779,13 +783,39 @@ async def seed_data(db: AsyncSession = Depends(get_db)):
         customer = Customer(**c)
         db.add(customer)
 
+    # Flush to get IDs
+    await db.flush()
+
+    # Seed price book
+    price_book = PriceBook(
+        name="Standard Pricing 2026",
+        description="Standard pricing for all customers",
+        is_active=True
+    )
+    db.add(price_book)
+    await db.flush()
+
+    # Get items for price book entries
+    result = await db.execute(select(Item))
+    items = list(result.scalars().all())
+
+    for item in items:
+        entry = PriceBookEntry(
+            price_book_id=price_book.id,
+            item_id=item.id,
+            unit_price=item.cost_per_unit * 1.5,  # 50% markup
+            min_quantity=1
+        )
+        db.add(entry)
+
     await db.commit()
 
     return {
         "message": "Database seeded with demo data",
         "machines": len(machines_data),
         "items": len(items_data),
-        "customers": len(customers_data)
+        "customers": len(customers_data),
+        "price_books": 1
     }
 
 

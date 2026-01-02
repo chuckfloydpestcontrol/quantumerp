@@ -26,7 +26,8 @@ from services.scheduling import SchedulingService
 from services.costing import CostingService
 from services.job import JobService
 from services.conversation import ConversationService
-from models import QuoteType, Item
+from services.estimate import EstimateService
+from models import QuoteType, Item, Customer
 
 
 # ============================================================================
@@ -80,6 +81,11 @@ class AgentState(TypedDict):
     hourly_rate: Optional[float]
     new_priority: Optional[int]
     new_delivery_date: Optional[str]
+
+    # Estimate fields
+    estimate_id: Optional[int]
+    estimate_number: Optional[str]
+    rejection_reason: Optional[str]
 
     # Parallel execution results (Fan-In collection)
     inventory_data: Optional[dict]
@@ -140,6 +146,16 @@ You support these workflows:
 - VIEW_QUOTE: View a specific quote (e.g., "show quote Q-20251231-0001")
 - LIST_QUOTES: List all quotes (e.g., "show pending quotes", "list quotes")
 
+**Estimates:**
+- CREATE_ESTIMATE: Create a new estimate for a customer (e.g., "create estimate for Acme", "new quote for Widget Corp")
+- LIST_ESTIMATES: List all estimates (e.g., "show my estimates", "list quotes")
+- VIEW_ESTIMATE: View a specific estimate (e.g., "show estimate E-123", "open E-20260102-0003")
+- SUBMIT_ESTIMATE: Submit estimate for approval (e.g., "submit E-123 for approval")
+- APPROVE_ESTIMATE: Approve a pending estimate (e.g., "approve estimate E-123")
+- REJECT_ESTIMATE: Reject a pending estimate with reason (e.g., "reject E-123 because pricing too low")
+- SEND_ESTIMATE: Send estimate to customer (e.g., "send E-123 to customer")
+- ACCEPT_ESTIMATE: Mark estimate as accepted by customer (e.g., "customer accepted E-123")
+
 **Scheduling & Analytics:**
 - SCHEDULE_VIEW: View production schedule
 - LIST_MACHINES: List all machines (e.g., "show machines", "list equipment")
@@ -173,10 +189,12 @@ Extract these details when applicable:
 - hourly_rate: Machine hourly rate
 - new_priority: New priority value (1-10)
 - new_delivery_date: New delivery date
+- estimate_number: Estimate reference (e.g., "E-20260102-0001")
+- rejection_reason: Reason for rejecting an estimate
 
 Respond with a JSON object:
 {{
-    "intent": "QUOTE_REQUEST|ACCEPT_QUOTE|CREATE_JOB|SCHEDULE_REQUEST|JOB_STATUS|GET_JOB_DETAILS|SEARCH_JOBS|UPDATE_JOB|START_JOB|COMPLETE_JOB|CANCEL_JOB|ATTACH_PO|LIST_INVENTORY|INVENTORY_QUERY|LOW_STOCK_ALERT|ADJUST_INVENTORY|ADD_ITEM|REORDER_ITEM|ADD_CUSTOMER|LIST_CUSTOMERS|VIEW_QUOTE|LIST_QUOTES|SCHEDULE_VIEW|LIST_MACHINES|ADD_MACHINE|MACHINE_UTILIZATION|FINANCIAL_HOLD_REPORT|GENERAL_QUERY|HELP",
+    "intent": "QUOTE_REQUEST|ACCEPT_QUOTE|CREATE_JOB|SCHEDULE_REQUEST|JOB_STATUS|GET_JOB_DETAILS|SEARCH_JOBS|UPDATE_JOB|START_JOB|COMPLETE_JOB|CANCEL_JOB|ATTACH_PO|LIST_INVENTORY|INVENTORY_QUERY|LOW_STOCK_ALERT|ADJUST_INVENTORY|ADD_ITEM|REORDER_ITEM|ADD_CUSTOMER|LIST_CUSTOMERS|VIEW_QUOTE|LIST_QUOTES|CREATE_ESTIMATE|LIST_ESTIMATES|VIEW_ESTIMATE|SUBMIT_ESTIMATE|APPROVE_ESTIMATE|REJECT_ESTIMATE|SEND_ESTIMATE|ACCEPT_ESTIMATE|SCHEDULE_VIEW|LIST_MACHINES|ADD_MACHINE|MACHINE_UTILIZATION|FINANCIAL_HOLD_REPORT|GENERAL_QUERY|HELP",
     "customer_name": "extracted or null",
     "customer_email": "email or null",
     "product_description": "what to manufacture or null",
@@ -199,6 +217,8 @@ Respond with a JSON object:
     "hourly_rate": "rate or null",
     "new_priority": "priority 1-10 or null",
     "new_delivery_date": "date string or null",
+    "estimate_number": "estimate number or null",
+    "rejection_reason": "reason for rejection or null",
     "clarification_needed": "question if more info needed or null"
 }}"""
 
@@ -291,6 +311,16 @@ class QuantumHub:
         workflow.add_node("view_quote", self._view_quote_node)
         workflow.add_node("list_quotes", self._list_quotes_node)
 
+        # Add nodes - Estimates
+        workflow.add_node("create_estimate", self._create_estimate_node)
+        workflow.add_node("list_estimates", self._list_estimates_node)
+        workflow.add_node("view_estimate", self._view_estimate_node)
+        workflow.add_node("submit_estimate", self._submit_estimate_node)
+        workflow.add_node("approve_estimate", self._approve_estimate_node)
+        workflow.add_node("reject_estimate", self._reject_estimate_node)
+        workflow.add_node("send_estimate", self._send_estimate_node)
+        workflow.add_node("accept_estimate", self._accept_estimate_node)
+
         # Add nodes - Analytics/Machines
         workflow.add_node("schedule_view", self._schedule_view_node)
         workflow.add_node("list_machines", self._list_machines_node)
@@ -314,6 +344,15 @@ class QuantumHub:
                 "accept_quote": "accept_quote",
                 "view_quote": "view_quote",
                 "list_quotes": "list_quotes",
+                # Estimates
+                "create_estimate": "create_estimate",
+                "list_estimates": "list_estimates",
+                "view_estimate": "view_estimate",
+                "submit_estimate": "submit_estimate",
+                "approve_estimate": "approve_estimate",
+                "reject_estimate": "reject_estimate",
+                "send_estimate": "send_estimate",
+                "accept_estimate": "accept_estimate",
                 # Job Management
                 "job_status": "job_status",
                 "create_job": "create_job",
@@ -357,6 +396,14 @@ class QuantumHub:
         workflow.add_edge("accept_quote", END)
         workflow.add_edge("view_quote", END)
         workflow.add_edge("list_quotes", END)
+        workflow.add_edge("create_estimate", END)
+        workflow.add_edge("list_estimates", END)
+        workflow.add_edge("view_estimate", END)
+        workflow.add_edge("submit_estimate", END)
+        workflow.add_edge("approve_estimate", END)
+        workflow.add_edge("reject_estimate", END)
+        workflow.add_edge("send_estimate", END)
+        workflow.add_edge("accept_estimate", END)
         workflow.add_edge("job_status", END)
         workflow.add_edge("create_job", END)
         workflow.add_edge("create_job_direct", END)
@@ -395,6 +442,24 @@ class QuantumHub:
             return "view_quote"
         elif intent == "LIST_QUOTES":
             return "list_quotes"
+
+        # Estimates
+        elif intent == "CREATE_ESTIMATE":
+            return "create_estimate"
+        elif intent == "LIST_ESTIMATES":
+            return "list_estimates"
+        elif intent == "VIEW_ESTIMATE":
+            return "view_estimate"
+        elif intent == "SUBMIT_ESTIMATE":
+            return "submit_estimate"
+        elif intent == "APPROVE_ESTIMATE":
+            return "approve_estimate"
+        elif intent == "REJECT_ESTIMATE":
+            return "reject_estimate"
+        elif intent == "SEND_ESTIMATE":
+            return "send_estimate"
+        elif intent == "ACCEPT_ESTIMATE":
+            return "accept_estimate"
 
         # Job Management
         elif intent == "SCHEDULE_REQUEST":
@@ -524,6 +589,8 @@ class QuantumHub:
                 "hourly_rate": parsed.get("hourly_rate"),
                 "new_priority": parsed.get("new_priority"),
                 "new_delivery_date": parsed.get("new_delivery_date"),
+                "estimate_number": parsed.get("estimate_number"),
+                "rejection_reason": parsed.get("rejection_reason"),
                 "next_step": parsed.get("intent", "GENERAL_QUERY").lower()
             }
 
@@ -594,6 +661,30 @@ class QuantumHub:
                 return {"intent": "VIEW_QUOTE", "next_step": "view_quote"}
             elif any(word in user_lower for word in ["list quotes", "show quotes", "all quotes", "pending quotes"]):
                 return {"intent": "LIST_QUOTES", "next_step": "list_quotes"}
+
+            # Estimates
+            elif any(word in user_lower for word in ["create estimate", "new estimate", "make estimate", "new quote for"]):
+                return {"intent": "CREATE_ESTIMATE", "next_step": "create_estimate"}
+            elif any(word in user_lower for word in ["list estimates", "show estimates", "my estimates", "all estimates"]):
+                return {"intent": "LIST_ESTIMATES", "next_step": "list_estimates"}
+            elif re.search(r'(show|view|open)\s*(estimate|e-)\s*', user_lower):
+                estimate_match = re.search(r'E-\d{8}-\d{4}', user_input, re.IGNORECASE)
+                return {"intent": "VIEW_ESTIMATE", "estimate_number": estimate_match.group(0) if estimate_match else None, "next_step": "view_estimate"}
+            elif any(word in user_lower for word in ["submit estimate", "submit e-"]):
+                estimate_match = re.search(r'E-\d{8}-\d{4}', user_input, re.IGNORECASE)
+                return {"intent": "SUBMIT_ESTIMATE", "estimate_number": estimate_match.group(0) if estimate_match else None, "next_step": "submit_estimate"}
+            elif any(word in user_lower for word in ["approve estimate", "approve e-"]):
+                estimate_match = re.search(r'E-\d{8}-\d{4}', user_input, re.IGNORECASE)
+                return {"intent": "APPROVE_ESTIMATE", "estimate_number": estimate_match.group(0) if estimate_match else None, "next_step": "approve_estimate"}
+            elif any(word in user_lower for word in ["reject estimate", "reject e-"]):
+                estimate_match = re.search(r'E-\d{8}-\d{4}', user_input, re.IGNORECASE)
+                return {"intent": "REJECT_ESTIMATE", "estimate_number": estimate_match.group(0) if estimate_match else None, "next_step": "reject_estimate"}
+            elif any(word in user_lower for word in ["send estimate", "send e-"]):
+                estimate_match = re.search(r'E-\d{8}-\d{4}', user_input, re.IGNORECASE)
+                return {"intent": "SEND_ESTIMATE", "estimate_number": estimate_match.group(0) if estimate_match else None, "next_step": "send_estimate"}
+            elif any(word in user_lower for word in ["customer accepted", "accepted estimate", "accepted e-"]):
+                estimate_match = re.search(r'E-\d{8}-\d{4}', user_input, re.IGNORECASE)
+                return {"intent": "ACCEPT_ESTIMATE", "estimate_number": estimate_match.group(0) if estimate_match else None, "next_step": "accept_estimate"}
 
             # Reorder
             elif any(word in user_lower for word in ["reorder", "restock"]) and "point" not in user_lower:
@@ -1966,9 +2057,480 @@ Please synthesize these into a clear response for the customer.
                 "messages": [AIMessage(content="\n".join(lines))]
             }
 
+    # =========================================================================
+    # Estimate Node Handlers
+    # =========================================================================
+
+    async def _create_estimate_node(self, state: AgentState) -> dict:
+        """Create a new estimate for a customer."""
+        customer_name = state.get("customer_name")
+
+        if not customer_name:
+            return {
+                "response_type": "clarification",
+                "messages": [AIMessage(
+                    content="To create an estimate, I need the customer name.\n\n"
+                           "Example: 'Create estimate for Acme Corp'"
+                )]
+            }
+
+        async with get_db_context() as db:
+            from sqlalchemy import select
+
+            # Find customer
+            result = await db.execute(
+                select(Customer).where(Customer.name.ilike(f"%{customer_name}%"))
+            )
+            customer = result.scalar_one_or_none()
+
+            if not customer:
+                return {
+                    "response_type": "error",
+                    "messages": [AIMessage(
+                        content=f"Customer '{customer_name}' not found. Please add them first with 'add customer {customer_name}'"
+                    )]
+                }
+
+            # Create the estimate
+            estimate_service = EstimateService(db)
+            estimate = await estimate_service.create_estimate(
+                customer_id=customer.id,
+                notes=state.get("product_description")
+            )
+            await db.commit()
+
+            # Reload with relationships
+            estimate = await estimate_service.get_estimate(estimate.id)
+
+            return {
+                "response_type": "estimate_card",
+                "response_data": {
+                    "estimate": {
+                        "id": estimate.id,
+                        "estimate_number": estimate.estimate_number,
+                        "version": estimate.version,
+                        "customer_id": estimate.customer_id,
+                        "customer_name": customer.name,
+                        "status": estimate.status.value,
+                        "currency_code": estimate.currency_code,
+                        "valid_until": estimate.valid_until.isoformat() if estimate.valid_until else None,
+                        "subtotal": float(estimate.subtotal or 0),
+                        "tax_amount": float(estimate.tax_amount or 0),
+                        "total_amount": float(estimate.total_amount or 0),
+                        "delivery_feasible": estimate.delivery_feasible,
+                        "created_at": estimate.created_at.isoformat(),
+                        "updated_at": estimate.updated_at.isoformat(),
+                        "line_items": []
+                    },
+                    "message": f"Created estimate {estimate.estimate_number} for {customer.name}"
+                },
+                "messages": [AIMessage(
+                    content=f"**Estimate Created!**\n\n"
+                           f"Estimate **{estimate.estimate_number}** has been created for {customer.name}.\n\n"
+                           f"Add line items using the Add Line button or say 'add item to estimate'."
+                )]
+            }
+
+    async def _list_estimates_node(self, state: AgentState) -> dict:
+        """List all estimates."""
+        async with get_db_context() as db:
+            estimate_service = EstimateService(db)
+            estimates = await estimate_service.list_estimates(limit=20)
+
+            if not estimates:
+                return {
+                    "response_type": "estimate_list",
+                    "response_data": {"estimates": [], "message": "No estimates found."},
+                    "messages": [AIMessage(content="No estimates found. Create one by saying 'create estimate for [customer name]'")]
+                }
+
+            estimate_list = []
+            for est in estimates:
+                customer_name = est.customer.name if est.customer else f"Customer #{est.customer_id}"
+                estimate_list.append({
+                    "id": est.id,
+                    "estimate_number": est.estimate_number,
+                    "version": est.version,
+                    "customer_id": est.customer_id,
+                    "customer_name": customer_name,
+                    "status": est.status.value,
+                    "total_amount": float(est.total_amount or 0),
+                    "valid_until": est.valid_until.isoformat() if est.valid_until else None,
+                    "created_at": est.created_at.isoformat()
+                })
+
+            return {
+                "response_type": "estimate_list",
+                "response_data": {
+                    "estimates": estimate_list,
+                    "message": f"Found {len(estimates)} estimate(s)"
+                },
+                "messages": [AIMessage(
+                    content=f"Here are your {len(estimates)} estimate(s). Click on one to view details."
+                )]
+            }
+
+    async def _view_estimate_node(self, state: AgentState) -> dict:
+        """View a specific estimate."""
+        estimate_number = state.get("estimate_number")
+        estimate_id = state.get("estimate_id")
+
+        if not estimate_number and not estimate_id:
+            return {
+                "response_type": "clarification",
+                "messages": [AIMessage(
+                    content="Which estimate would you like to view?\n\n"
+                           "Example: 'Show estimate E-20260102-0001'"
+                )]
+            }
+
+        async with get_db_context() as db:
+            estimate_service = EstimateService(db)
+
+            if estimate_id:
+                estimate = await estimate_service.get_estimate(estimate_id)
+            else:
+                # Find by number
+                from sqlalchemy import select
+                from models import Estimate as EstimateModel
+                result = await db.execute(
+                    select(EstimateModel).where(EstimateModel.estimate_number == estimate_number)
+                )
+                est = result.scalar_one_or_none()
+                if est:
+                    estimate = await estimate_service.get_estimate(est.id)
+                else:
+                    estimate = None
+
+            if not estimate:
+                return {
+                    "response_type": "error",
+                    "messages": [AIMessage(content=f"Estimate not found.")]
+                }
+
+            customer_name = estimate.customer.name if estimate.customer else f"Customer #{estimate.customer_id}"
+
+            line_items = []
+            for item in estimate.line_items:
+                line_items.append({
+                    "id": item.id,
+                    "estimate_id": item.estimate_id,
+                    "item_id": item.item_id,
+                    "description": item.description,
+                    "quantity": float(item.quantity),
+                    "unit_price": float(item.unit_price),
+                    "discount_pct": float(item.discount_pct or 0),
+                    "notes": item.notes,
+                    "line_total": float(item.line_total),
+                    "tax_amount": float(item.tax_amount or 0),
+                    "atp_status": item.atp_status.value if item.atp_status else None,
+                    "atp_available_qty": float(item.atp_available_qty) if item.atp_available_qty else None,
+                    "atp_shortage_qty": float(item.atp_shortage_qty) if item.atp_shortage_qty else None,
+                    "atp_lead_time_days": item.atp_lead_time_days,
+                    "sort_order": item.sort_order or 0,
+                    "created_at": item.created_at.isoformat()
+                })
+
+            return {
+                "response_type": "estimate_card",
+                "response_data": {
+                    "estimate": {
+                        "id": estimate.id,
+                        "estimate_number": estimate.estimate_number,
+                        "version": estimate.version,
+                        "parent_estimate_id": estimate.parent_estimate_id,
+                        "customer_id": estimate.customer_id,
+                        "customer_name": customer_name,
+                        "status": estimate.status.value,
+                        "currency_code": estimate.currency_code,
+                        "valid_until": estimate.valid_until.isoformat() if estimate.valid_until else None,
+                        "requested_delivery_date": estimate.requested_delivery_date.isoformat() if estimate.requested_delivery_date else None,
+                        "earliest_delivery_date": estimate.earliest_delivery_date.isoformat() if estimate.earliest_delivery_date else None,
+                        "delivery_feasible": estimate.delivery_feasible,
+                        "notes": estimate.notes,
+                        "subtotal": float(estimate.subtotal or 0),
+                        "tax_amount": float(estimate.tax_amount or 0),
+                        "total_amount": float(estimate.total_amount or 0),
+                        "margin_percent": float(estimate.margin_percent) if estimate.margin_percent else None,
+                        "rejection_reason": estimate.rejection_reason,
+                        "created_at": estimate.created_at.isoformat(),
+                        "updated_at": estimate.updated_at.isoformat(),
+                        "line_items": line_items
+                    }
+                },
+                "messages": [AIMessage(
+                    content=f"Here's estimate **{estimate.estimate_number}** for {customer_name}."
+                )]
+            }
+
+    async def _submit_estimate_node(self, state: AgentState) -> dict:
+        """Submit estimate for approval."""
+        estimate_number = state.get("estimate_number")
+
+        if not estimate_number:
+            return {
+                "response_type": "clarification",
+                "messages": [AIMessage(
+                    content="Which estimate would you like to submit?\n\n"
+                           "Example: 'Submit estimate E-20260102-0001'"
+                )]
+            }
+
+        async with get_db_context() as db:
+            from sqlalchemy import select
+            from models import Estimate as EstimateModel
+
+            result = await db.execute(
+                select(EstimateModel).where(EstimateModel.estimate_number == estimate_number)
+            )
+            estimate = result.scalar_one_or_none()
+
+            if not estimate:
+                return {
+                    "response_type": "error",
+                    "messages": [AIMessage(content=f"Estimate {estimate_number} not found.")]
+                }
+
+            estimate_service = EstimateService(db)
+            try:
+                await estimate_service.submit_for_approval(estimate.id)
+                await db.commit()
+                estimate = await estimate_service.get_estimate(estimate.id)
+
+                return {
+                    "response_type": "confirmation",
+                    "response_data": {
+                        "estimate_number": estimate.estimate_number,
+                        "status": estimate.status.value,
+                        "message": f"Estimate {estimate.estimate_number} submitted for approval"
+                    },
+                    "messages": [AIMessage(
+                        content=f"**Estimate Submitted!**\n\n"
+                               f"Estimate **{estimate.estimate_number}** has been submitted for approval.\n"
+                               f"Status: **{estimate.status.value}**"
+                    )]
+                }
+            except ValueError as e:
+                return {
+                    "response_type": "error",
+                    "messages": [AIMessage(content=str(e))]
+                }
+
+    async def _approve_estimate_node(self, state: AgentState) -> dict:
+        """Approve a pending estimate."""
+        estimate_number = state.get("estimate_number")
+
+        if not estimate_number:
+            return {
+                "response_type": "clarification",
+                "messages": [AIMessage(
+                    content="Which estimate would you like to approve?\n\n"
+                           "Example: 'Approve estimate E-20260102-0001'"
+                )]
+            }
+
+        async with get_db_context() as db:
+            from sqlalchemy import select
+            from models import Estimate as EstimateModel
+
+            result = await db.execute(
+                select(EstimateModel).where(EstimateModel.estimate_number == estimate_number)
+            )
+            estimate = result.scalar_one_or_none()
+
+            if not estimate:
+                return {
+                    "response_type": "error",
+                    "messages": [AIMessage(content=f"Estimate {estimate_number} not found.")]
+                }
+
+            estimate_service = EstimateService(db)
+            try:
+                await estimate_service.approve(estimate.id, approved_by=1)
+                await db.commit()
+                estimate = await estimate_service.get_estimate(estimate.id)
+
+                return {
+                    "response_type": "confirmation",
+                    "response_data": {
+                        "estimate_number": estimate.estimate_number,
+                        "status": estimate.status.value
+                    },
+                    "messages": [AIMessage(
+                        content=f"**Estimate Approved!**\n\n"
+                               f"Estimate **{estimate.estimate_number}** has been approved.\n"
+                               f"You can now send it to the customer."
+                    )]
+                }
+            except ValueError as e:
+                return {
+                    "response_type": "error",
+                    "messages": [AIMessage(content=str(e))]
+                }
+
+    async def _reject_estimate_node(self, state: AgentState) -> dict:
+        """Reject a pending estimate."""
+        estimate_number = state.get("estimate_number")
+        rejection_reason = state.get("rejection_reason") or "No reason provided"
+
+        if not estimate_number:
+            return {
+                "response_type": "clarification",
+                "messages": [AIMessage(
+                    content="Which estimate would you like to reject?\n\n"
+                           "Example: 'Reject estimate E-20260102-0001 because pricing too low'"
+                )]
+            }
+
+        async with get_db_context() as db:
+            from sqlalchemy import select
+            from models import Estimate as EstimateModel
+
+            result = await db.execute(
+                select(EstimateModel).where(EstimateModel.estimate_number == estimate_number)
+            )
+            estimate = result.scalar_one_or_none()
+
+            if not estimate:
+                return {
+                    "response_type": "error",
+                    "messages": [AIMessage(content=f"Estimate {estimate_number} not found.")]
+                }
+
+            estimate_service = EstimateService(db)
+            try:
+                await estimate_service.reject(estimate.id, reason=rejection_reason)
+                await db.commit()
+
+                return {
+                    "response_type": "confirmation",
+                    "response_data": {
+                        "estimate_number": estimate.estimate_number,
+                        "status": "rejected",
+                        "reason": rejection_reason
+                    },
+                    "messages": [AIMessage(
+                        content=f"**Estimate Rejected**\n\n"
+                               f"Estimate **{estimate_number}** has been rejected.\n"
+                               f"Reason: {rejection_reason}"
+                    )]
+                }
+            except ValueError as e:
+                return {
+                    "response_type": "error",
+                    "messages": [AIMessage(content=str(e))]
+                }
+
+    async def _send_estimate_node(self, state: AgentState) -> dict:
+        """Send estimate to customer."""
+        estimate_number = state.get("estimate_number")
+
+        if not estimate_number:
+            return {
+                "response_type": "clarification",
+                "messages": [AIMessage(
+                    content="Which estimate would you like to send?\n\n"
+                           "Example: 'Send estimate E-20260102-0001 to customer'"
+                )]
+            }
+
+        async with get_db_context() as db:
+            from sqlalchemy import select
+            from models import Estimate as EstimateModel
+
+            result = await db.execute(
+                select(EstimateModel).where(EstimateModel.estimate_number == estimate_number)
+            )
+            estimate = result.scalar_one_or_none()
+
+            if not estimate:
+                return {
+                    "response_type": "error",
+                    "messages": [AIMessage(content=f"Estimate {estimate_number} not found.")]
+                }
+
+            estimate_service = EstimateService(db)
+            try:
+                await estimate_service.send_to_customer(estimate.id)
+                await db.commit()
+
+                return {
+                    "response_type": "confirmation",
+                    "response_data": {
+                        "estimate_number": estimate.estimate_number,
+                        "status": "sent"
+                    },
+                    "messages": [AIMessage(
+                        content=f"**Estimate Sent!**\n\n"
+                               f"Estimate **{estimate_number}** has been sent to the customer.\n"
+                               f"Waiting for customer response."
+                    )]
+                }
+            except ValueError as e:
+                return {
+                    "response_type": "error",
+                    "messages": [AIMessage(content=str(e))]
+                }
+
+    async def _accept_estimate_node(self, state: AgentState) -> dict:
+        """Mark estimate as accepted by customer."""
+        estimate_number = state.get("estimate_number")
+
+        if not estimate_number:
+            return {
+                "response_type": "clarification",
+                "messages": [AIMessage(
+                    content="Which estimate did the customer accept?\n\n"
+                           "Example: 'Customer accepted E-20260102-0001'"
+                )]
+            }
+
+        async with get_db_context() as db:
+            from sqlalchemy import select
+            from models import Estimate as EstimateModel
+
+            result = await db.execute(
+                select(EstimateModel).where(EstimateModel.estimate_number == estimate_number)
+            )
+            estimate = result.scalar_one_or_none()
+
+            if not estimate:
+                return {
+                    "response_type": "error",
+                    "messages": [AIMessage(content=f"Estimate {estimate_number} not found.")]
+                }
+
+            estimate_service = EstimateService(db)
+            try:
+                await estimate_service.accept(estimate.id)
+                await db.commit()
+
+                return {
+                    "response_type": "confirmation",
+                    "response_data": {
+                        "estimate_number": estimate.estimate_number,
+                        "status": "accepted"
+                    },
+                    "messages": [AIMessage(
+                        content=f"**Estimate Accepted!**\n\n"
+                               f"Estimate **{estimate_number}** has been marked as accepted.\n"
+                               f"You can now create a job from this estimate."
+                    )]
+                }
+            except ValueError as e:
+                return {
+                    "response_type": "error",
+                    "messages": [AIMessage(content=str(e))]
+                }
+
     async def _help_node(self, state: AgentState) -> dict:
         """Help Node - Shows available commands and examples."""
         help_text = """**Quantum HUB Quick Help**
+
+**Estimates:**
+- "create estimate for Acme Corp"
+- "show my estimates" / "view estimate E-20260102-0001"
+- "submit estimate E-xxx" / "approve estimate" / "send estimate"
 
 **Quoting:**
 - "I need a quote for 10 aluminum brackets"
@@ -2109,6 +2671,9 @@ How can I help you today?"""
             "hourly_rate": None,
             "new_priority": None,
             "new_delivery_date": None,
+            "estimate_id": None,
+            "estimate_number": None,
+            "rejection_reason": None,
             "response_type": None,
             "response_data": None,
             "error": None

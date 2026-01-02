@@ -21,7 +21,9 @@ export type UIResponseType =
   | 'inventory_table'
   | 'chart'
   | 'confirmation'
-  | 'error';
+  | 'error'
+  | 'estimate_card'
+  | 'estimate_list';
 
 // API Response Types
 
@@ -141,4 +143,102 @@ export interface GenerativeUIProps {
   type: UIResponseType;
   data?: Record<string, unknown>;
   onAction?: (action: string, payload?: unknown) => void;
+}
+
+// ============================================================================
+// Estimate Types
+// ============================================================================
+
+export type EstimateStatus =
+  | 'draft'
+  | 'pending_approval'
+  | 'approved'
+  | 'sent'
+  | 'accepted'
+  | 'rejected'
+  | 'expired';
+
+export type ATPStatus = 'available' | 'partial' | 'backorder';
+
+export interface EstimateLineItem {
+  id: number;
+  estimate_id: number;
+  item_id?: number;
+  description: string;
+  quantity: number;
+  unit_price: number;
+  discount_pct: number;
+  notes?: string;
+  list_price?: number;
+  unit_cost?: number;
+  line_total: number;
+  tax_amount: number;
+  atp_status?: ATPStatus;
+  atp_available_qty?: number;
+  atp_shortage_qty?: number;
+  atp_lead_time_days?: number;
+  sort_order: number;
+  created_at: string;
+}
+
+export interface Estimate {
+  id: number;
+  estimate_number: string;
+  version: number;
+  parent_estimate_id?: number;
+  customer_id: number;
+  customer_name?: string;
+  status: EstimateStatus;
+  currency_code: string;
+  price_book_id?: number;
+  valid_until?: string;
+  requested_delivery_date?: string;
+  earliest_delivery_date?: string;
+  delivery_feasible: boolean;
+  notes?: string;
+  subtotal: number;
+  tax_amount: number;
+  total_amount: number;
+  margin_percent?: number;
+  pending_approvers?: string[];
+  approved_by?: number;
+  approved_at?: string;
+  rejection_reason?: string;
+  sent_at?: string;
+  accepted_at?: string;
+  created_by?: number;
+  created_at: string;
+  updated_at: string;
+  line_items: EstimateLineItem[];
+}
+
+export interface EstimateListItem {
+  id: number;
+  estimate_number: string;
+  version: number;
+  customer_id: number;
+  customer_name?: string;
+  status: EstimateStatus;
+  total_amount: number;
+  valid_until?: string;
+  created_at: string;
+}
+
+export interface EstimateLineItemCreate {
+  item_id?: number;
+  description: string;
+  quantity: number;
+  unit_price: number;
+  discount_pct?: number;
+  notes?: string;
+}
+
+export interface EstimateCardData {
+  estimate: Estimate;
+  customer?: { id: number; name: string; email?: string };
+}
+
+export interface EstimateListData {
+  estimates: EstimateListItem[];
+  message?: string;
 }

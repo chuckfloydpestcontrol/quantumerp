@@ -1,14 +1,102 @@
-import React from 'react';
+import React, { useState, useCallback } from 'react';
 import { AlertCircle, CheckCircle, Info } from 'lucide-react';
-import { UIResponseType, QuoteOptionsData, ScheduleData } from '../types';
+import { UIResponseType, QuoteOptionsData, ScheduleData, Estimate, EstimateListItem, EstimateLineItemCreate } from '../types';
 import { QuoteOptions } from './QuoteOptions';
 import { JobStatusComponent } from './JobStatus';
 import { ScheduleView } from './ScheduleView';
+import { EstimateCard } from './EstimateCard';
+import { EstimateList } from './EstimateList';
+import { AddLineModal } from './AddLineModal';
 
 interface GenerativeUIProps {
   type: UIResponseType;
   data?: Record<string, unknown>;
   onAction?: (action: string, payload?: unknown) => void;
+}
+
+const API_BASE = '/api';
+
+// Wrapper component for EstimateCard to handle modal state and API calls
+function EstimateCardWrapper({
+  estimate: initialEstimate,
+  onAction,
+}: {
+  estimate: Estimate;
+  onAction?: (action: string, payload?: unknown) => void;
+}) {
+  const [estimate, setEstimate] = useState<Estimate>(initialEstimate);
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
+
+  const refreshEstimate = useCallback(async () => {
+    try {
+      const response = await fetch(`${API_BASE}/v1/estimates/${estimate.id}`);
+      if (response.ok) {
+        const data = await response.json();
+        setEstimate(data);
+      }
+    } catch (error) {
+      console.error('Failed to refresh estimate:', error);
+    }
+  }, [estimate.id]);
+
+  const handleAddLine = useCallback(async (lineItem: EstimateLineItemCreate) => {
+    setIsLoading(true);
+    try {
+      const response = await fetch(`${API_BASE}/v1/estimates/${estimate.id}/lines`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(lineItem),
+      });
+      if (response.ok) {
+        await refreshEstimate();
+      }
+    } catch (error) {
+      console.error('Failed to add line:', error);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [estimate.id, refreshEstimate]);
+
+  const handleDeleteLine = useCallback(async (lineId: number) => {
+    if (!confirm('Delete this line item?')) return;
+    setIsLoading(true);
+    try {
+      const response = await fetch(`${API_BASE}/v1/estimates/${estimate.id}/lines/${lineId}`, {
+        method: 'DELETE',
+      });
+      if (response.ok) {
+        await refreshEstimate();
+      }
+    } catch (error) {
+      console.error('Failed to delete line:', error);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [estimate.id, refreshEstimate]);
+
+  const handleAction = useCallback((action: string) => {
+    onAction?.(action, { estimateId: estimate.id, estimateNumber: estimate.estimate_number });
+  }, [onAction, estimate.id, estimate.estimate_number]);
+
+  return (
+    <>
+      <div className={isLoading ? 'opacity-50 pointer-events-none' : ''}>
+        <EstimateCard
+          estimate={estimate}
+          onAddLine={() => setIsModalOpen(true)}
+          onDeleteLine={handleDeleteLine}
+          onAction={handleAction}
+        />
+      </div>
+      <AddLineModal
+        isOpen={isModalOpen}
+        onClose={() => setIsModalOpen(false)}
+        onAdd={handleAddLine}
+        estimateId={estimate.id}
+      />
+    </>
+  );
 }
 
 export function GenerativeUI({ type, data, onAction }: GenerativeUIProps) {
@@ -141,6 +229,32 @@ export function GenerativeUI({ type, data, onAction }: GenerativeUIProps) {
         );
       }
       return null;
+
+    case 'estimate_card':
+      const estimateCardData = data as { estimate?: Estimate; message?: string };
+      if (estimateCardData?.estimate) {
+        return (
+          <EstimateCardWrapper
+            estimate={estimateCardData.estimate}
+            onAction={onAction}
+          />
+        );
+      }
+      return null;
+
+    case 'estimate_list':
+      const estimateListData = data as { estimates?: EstimateListItem[]; message?: string };
+      return (
+        <div className="space-y-3">
+          {estimateListData?.message && (
+            <div className="text-sm text-gray-600">{estimateListData.message}</div>
+          )}
+          <EstimateList
+            estimates={estimateListData?.estimates || []}
+            onEstimateClick={(estimateNumber) => onAction?.('view_estimate', { estimateNumber })}
+          />
+        </div>
+      );
 
     case 'text':
     default:
