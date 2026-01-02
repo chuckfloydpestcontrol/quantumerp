@@ -1,6 +1,6 @@
 """Estimate service for CRUD, versioning, and status transitions."""
 
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from typing import Optional
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -44,7 +44,7 @@ class EstimateService:
             version=1,
             customer_id=customer_id,
             status=EstimateStatus.DRAFT,
-            valid_until=datetime.utcnow() + timedelta(days=valid_days),
+            valid_until=(datetime.utcnow() + timedelta(days=valid_days)).date(),
             requested_delivery_date=requested_delivery_date,
             notes=notes,
             created_by=created_by
@@ -98,7 +98,11 @@ class EstimateService:
         limit: int = 50
     ) -> list[Estimate]:
         """List estimates with optional filters."""
-        query = select(Estimate).order_by(Estimate.created_at.desc())
+        query = (
+            select(Estimate)
+            .options(selectinload(Estimate.customer))
+            .order_by(Estimate.created_at.desc())
+        )
 
         if customer_id:
             query = query.where(Estimate.customer_id == customer_id)
@@ -374,7 +378,7 @@ class EstimateService:
             status=EstimateStatus.DRAFT,
             currency_code=original.currency_code,
             price_book_id=original.price_book_id,
-            valid_until=datetime.utcnow() + timedelta(days=30),
+            valid_until=(datetime.utcnow() + timedelta(days=30)).date(),
             requested_delivery_date=original.requested_delivery_date,
             notes=original.notes
         )

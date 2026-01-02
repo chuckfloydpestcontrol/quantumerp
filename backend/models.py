@@ -497,7 +497,8 @@ class Estimate(Base):
 
     customer_id: Mapped[int] = mapped_column(ForeignKey("customers.id"), nullable=False)
     status: Mapped[EstimateStatus] = mapped_column(
-        Enum(EstimateStatus), default=EstimateStatus.DRAFT
+        Enum(EstimateStatus, name='estimate_status', values_callable=lambda x: [e.value for e in x]),
+        default=EstimateStatus.DRAFT
     )
 
     currency_code: Mapped[str] = mapped_column(String(3), default="USD")
@@ -570,8 +571,9 @@ class EstimateLineItem(Base):
     line_total: Mapped[float] = mapped_column(Float, nullable=False)
     tax_amount: Mapped[float] = mapped_column(Float, default=0)
 
-    atp_status: Mapped[ATPStatus] = mapped_column(
-        Enum(ATPStatus), default=ATPStatus.AVAILABLE
+    atp_status: Mapped[Optional[ATPStatus]] = mapped_column(
+        Enum(ATPStatus, name='atp_status', values_callable=lambda x: [e.value for e in x]),
+        nullable=True
     )
     atp_available_qty: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     atp_shortage_qty: Mapped[Optional[float]] = mapped_column(Float, nullable=True)

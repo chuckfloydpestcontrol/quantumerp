@@ -31,7 +31,8 @@ async def create_estimate(
         notes=data.notes
     )
     await db.commit()
-    return estimate
+    # Reload with relationships to avoid lazy loading issues
+    return await service.get_estimate(estimate.id)
 
 
 @router.post("/generate", response_model=EstimateResponse, status_code=201)
@@ -115,7 +116,8 @@ async def update_estimate(
         estimate.price_book_id = data.price_book_id
 
     await db.commit()
-    return estimate
+    # Reload with relationships
+    return await service.get_estimate(estimate_id)
 
 
 @router.delete("/{estimate_id}", status_code=204)
@@ -194,9 +196,9 @@ async def submit_estimate(
     """Submit estimate for approval."""
     service = EstimateService(db)
     try:
-        estimate = await service.submit_for_approval(estimate_id)
+        await service.submit_for_approval(estimate_id)
         await db.commit()
-        return estimate
+        return await service.get_estimate(estimate_id)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -211,9 +213,9 @@ async def approve_estimate(
     service = EstimateService(db)
     try:
         # TODO: Get actual user ID from auth
-        estimate = await service.approve(estimate_id, approved_by=1, comment=data.comment)
+        await service.approve(estimate_id, approved_by=1, comment=data.comment)
         await db.commit()
-        return estimate
+        return await service.get_estimate(estimate_id)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -227,9 +229,9 @@ async def reject_estimate(
     """Reject pending estimate."""
     service = EstimateService(db)
     try:
-        estimate = await service.reject(estimate_id, reason=data.reason)
+        await service.reject(estimate_id, reason=data.reason)
         await db.commit()
-        return estimate
+        return await service.get_estimate(estimate_id)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -242,9 +244,9 @@ async def send_estimate(
     """Send estimate to customer."""
     service = EstimateService(db)
     try:
-        estimate = await service.send_to_customer(estimate_id)
+        await service.send_to_customer(estimate_id)
         await db.commit()
-        return estimate
+        return await service.get_estimate(estimate_id)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -257,9 +259,9 @@ async def accept_estimate(
     """Accept estimate (customer accepted)."""
     service = EstimateService(db)
     try:
-        estimate = await service.accept(estimate_id)
+        await service.accept(estimate_id)
         await db.commit()
-        return estimate
+        return await service.get_estimate(estimate_id)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -272,9 +274,9 @@ async def revise_estimate(
     """Create new version of estimate."""
     service = EstimateService(db)
     try:
-        estimate = await service.create_revision(estimate_id)
+        new_estimate = await service.create_revision(estimate_id)
         await db.commit()
-        return estimate
+        return await service.get_estimate(new_estimate.id)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 

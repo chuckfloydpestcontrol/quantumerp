@@ -486,7 +486,7 @@ class EstimateLineItemResponse(EstimateLineItemBase):
     unit_cost: Optional[float] = None
     line_total: float
     tax_amount: float = 0
-    atp_status: ATPStatus = ATPStatus.AVAILABLE
+    atp_status: Optional[ATPStatus] = ATPStatus.AVAILABLE
     atp_available_qty: Optional[float] = None
     atp_shortage_qty: Optional[float] = None
     atp_lead_time_days: Optional[int] = None
@@ -542,7 +542,7 @@ class EstimateResponse(EstimateBase):
     rejection_reason: Optional[str] = None
     sent_at: Optional[datetime] = None
     accepted_at: Optional[datetime] = None
-    metadata: Optional[dict[str, Any]] = None
+    extra_data: Optional[dict[str, Any]] = None
     created_by: Optional[int] = None
     created_at: datetime
     updated_at: datetime
